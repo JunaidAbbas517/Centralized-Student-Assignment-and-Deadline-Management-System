@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
-import { btn, btnGhost, Card, courseColor, ErrorText, input } from '../components/ui'
+import { btn, btnGhost, Card, CourseDot, ErrorText, input } from '../components/ui'
 import { formatDateTime, localInputToIso } from '../lib/dates'
 import { supabase } from '../lib/supabase'
 import type { Assignment, DeadlineChange, ProgressStatus } from '../lib/types'
@@ -68,7 +68,9 @@ export default function AssignmentDetail() {
       <Link to={`/courses/${assignment.course_id}`} className="text-sm text-indigo-700 underline">← Back to course</Link>
       <Card>
         <div className="mb-2 flex flex-wrap items-center gap-2">
-          <span className={`rounded border px-1.5 text-xs ${courseColor(assignment.course_id)}`}>{assignment.courses?.course_code}</span>
+          <span className="inline-flex items-center gap-1.5 text-sm text-slate-600">
+            <CourseDot courseId={assignment.course_id} /> {assignment.courses?.name}
+          </span>
           <h1 className="text-xl font-bold">{assignment.title}</h1>
         </div>
         <p className="mb-2 whitespace-pre-wrap text-slate-700">{assignment.description || 'No description.'}</p>

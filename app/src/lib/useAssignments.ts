@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { registerCourses } from '../components/ui'
 import { supabase } from './supabase'
 import type { Assignment, AssignmentProgress, DeadlineChange, ProgressStatus } from './types'
 
@@ -6,12 +7,14 @@ export type AssignmentWithCourse = Assignment & { courses: { name: string; cours
 
 /**
  * Loads the assignments visible to the current user (RLS does the filtering),
- * the student's own progress, and the latest deadline change per assignment.
+ * the student's own progress, deadline changes, and a map of user names.
  */
 export function useAssignments(role: 'student' | 'instructor') {
   const [assignments, setAssignments] = useState<AssignmentWithCourse[]>([])
   const [progress, setProgress] = useState<Record<string, ProgressStatus>>({})
   const [changed, setChanged] = useState<Record<string, DeadlineChange>>({})
+  const [history, setHistory] = useState<Record<string, DeadlineChange[]>>({})
+  const [people, setPeople] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -25,12 +28,28 @@ export function useAssignments(role: 'student' | 'instructor') {
       setLoading(false)
       return
     }
-    setAssignments((a.data ?? []) as AssignmentWithCourse[])
+    const rows = (a.data ?? []) as AssignmentWithCourse[]
+
+    // Fix course colour order (by course code) before anything renders.
+    const codes = new Map<string, string>()
+    for (const r of rows) codes.set(r.course_id, r.courses?.course_code ?? '')
+    registerCourses([...codes.entries()].sort((x, y) => x[1].localeCompare(y[1])).map(([id]) => id))
+    setAssignments(rows)
 
     const c = await supabase.from('deadline_changes').select('*').order('changed_at', { ascending: false })
     const latest: Record<string, DeadlineChange> = {}
-    for (const row of (c.data ?? []) as DeadlineChange[]) latest[row.assignment_id] ??= row
+    const all: Record<string, DeadlineChange[]> = {}
+    for (const row of (c.data ?? []) as DeadlineChange[]) {
+      ;(all[row.assignment_id] ??= []).push(row)
+      latest[row.assignment_id] ??= row
+    }
     setChanged(latest)
+    setHistory(all)
+
+    const pr = await supabase.from('profiles').select('id, full_name')
+    const names: Record<string, string> = {}
+    for (const p of (pr.data ?? []) as { id: string; full_name: string }[]) names[p.id] = p.full_name
+    setPeople(names)
 
     if (role === 'student') {
       const p = await supabase.from('assignment_progress').select('*')
@@ -46,5 +65,5 @@ export function useAssignments(role: 'student' | 'instructor') {
     void reload()
   }, [reload])
 
-  return { assignments, progress, changed, loading, error, reload }
+  return { assignments, progress, changed, history, people, loading, error, reload }
 }

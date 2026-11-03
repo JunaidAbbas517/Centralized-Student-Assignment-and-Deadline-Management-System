@@ -34,7 +34,7 @@ export default function Login() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
       <Card className="w-full max-w-sm">
-        <h1 className="mb-1 text-xl font-bold text-indigo-700">Deadline Manager</h1>
+        <h1 className="mb-1 text-xl font-bold text-indigo-700">DeadlineHub</h1>
         <p className="mb-4 text-sm text-slate-600">
           {mode === 'login' ? 'Log in to continue' : 'Create a student account'}
         </p>

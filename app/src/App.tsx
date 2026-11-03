@@ -4,6 +4,8 @@ import Layout from './components/Layout'
 import { Card } from './components/ui'
 import { isConfigured } from './lib/supabase'
 import AssignmentDetail from './pages/AssignmentDetail'
+import Assignments from './pages/Assignments'
+import History from './pages/History'
 import CalendarPage from './pages/Calendar'
 import CourseDetail from './pages/CourseDetail'
 import Courses from './pages/Courses'
@@ -23,6 +25,8 @@ function Gate() {
         <Route path="courses" element={<Courses />} />
         <Route path="courses/:id" element={<CourseDetail />} />
         <Route path="assignments/:id" element={<AssignmentDetail />} />
+        <Route path="assignments" element={<Assignments />} />
+        <Route path="history" element={<History />} />
         <Route path="calendar" element={<CalendarPage />} />
         <Route path="notifications" element={<Notifications />} />
         <Route path="*" element={<Navigate to="/" replace />} />

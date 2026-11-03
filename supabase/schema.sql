@@ -64,7 +64,7 @@ create table public.notifications (
   recipient_id uuid not null references public.profiles(id) on delete cascade,
   assignment_id uuid references public.assignments(id) on delete cascade,
   deadline_change_id uuid references public.deadline_changes(id) on delete cascade,
-  type text not null check (type in ('deadline_changed')),
+  type text not null check (type in ('deadline_changed', 'reminder', 'new_assignment')),
   message text not null,
   is_read boolean not null default false,
   created_at timestamptz not null default now()

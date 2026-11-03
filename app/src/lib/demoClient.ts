@@ -3,62 +3,22 @@
  * so the UI can be reviewed without any backend. It supports just the query shapes
  * the app uses, and mimics the row-level visibility rules loosely.
  */
+import { seed } from './demoSeed'
+
 type Row = Record<string, unknown>
-type Db = Record<string, Row[]>
 interface Session { user: { id: string } }
 type Listener = (event: string, session: Session | null) => void
 
-const HOUR = 3600 * 1000
-const at = (hours: number) => new Date(Date.now() + hours * HOUR).toISOString()
 let counter = 0
 const uid = () => `id-${Date.now().toString(36)}-${counter++}`
 
-function seed(): Db {
-  return {
-    profiles: [
-      { id: 'u-inst', full_name: 'Dr. Wang Li', email: 'instructor@demo.edu', role: 'instructor' },
-      { id: 'u-stu', full_name: 'Ali Khan', email: 'student@demo.edu', role: 'student' },
-      { id: 'u-stu2', full_name: 'Chen Mei', email: 'chen@demo.edu', role: 'student' },
-    ],
-    courses: [
-      { id: 'c1', instructor_id: 'u-inst', name: 'Software Engineering', course_code: 'CS301', enrollment_code: 'SE301ABC', archived: false, created_at: at(-500) },
-      { id: 'c2', instructor_id: 'u-inst', name: 'Database Systems', course_code: 'CS205', enrollment_code: 'DB205XYZ', archived: false, created_at: at(-400) },
-      { id: 'c3', instructor_id: 'u-inst', name: 'Linear Algebra', course_code: 'MA210', enrollment_code: 'LA210QRS', archived: false, created_at: at(-300) },
-    ],
-    enrollments: [
-      { id: 'e1', student_id: 'u-stu', course_id: 'c1' },
-      { id: 'e2', student_id: 'u-stu', course_id: 'c2' },
-      { id: 'e3', student_id: 'u-stu', course_id: 'c3' },
-      { id: 'e4', student_id: 'u-stu2', course_id: 'c1' },
-    ],
-    assignments: [
-      { id: 'a1', course_id: 'c1', title: 'Requirements Specification', description: 'Write an SRS for your project, including use cases and functional requirements.', current_deadline: at(-50), created_at: at(-300) },
-      { id: 'a2', course_id: 'c2', title: 'ER Diagram Homework', description: 'Design an ER diagram for a library system.', current_deadline: at(20), created_at: at(-200) },
-      { id: 'a3', course_id: 'c1', title: 'Design Document', description: 'Architecture and database design for your system.', current_deadline: at(5 * 24), created_at: at(-100) },
-      { id: 'a4', course_id: 'c3', title: 'Problem Set 4', description: 'Eigenvalues and eigenvectors, exercises 1-12.', current_deadline: at(52), created_at: at(-90) },
-      { id: 'a5', course_id: 'c2', title: 'SQL Lab Report', description: 'Complete the joins and window functions lab.', current_deadline: at(9 * 24), created_at: at(-80) },
-      { id: 'a6', course_id: 'c3', title: 'Midterm Project', description: 'Applications of SVD to image compression.', current_deadline: at(16 * 24), created_at: at(-70) },
-      { id: 'a7', course_id: 'c1', title: 'Peer Code Review', description: 'Review a classmate\'s pull request.', current_deadline: at(-120), created_at: at(-400) },
-    ],
-    deadline_changes: [
-      { id: 'd1', assignment_id: 'a3', previous_deadline: at(3 * 24), new_deadline: at(5 * 24), changed_by: 'u-inst', reason: 'Extended after student feedback', changed_at: at(-6) },
-    ],
-    assignment_progress: [
-      { id: 'p1', student_id: 'u-stu', assignment_id: 'a7', status: 'completed' },
-      { id: 'p2', student_id: 'u-stu', assignment_id: 'a2', status: 'in_progress' },
-    ],
-    notifications: [
-      { id: 'n1', recipient_id: 'u-stu', assignment_id: 'a3', deadline_change_id: 'd1', type: 'deadline_changed', message: 'Deadline for "Design Document" changed (extended by 2 days)', is_read: false, created_at: at(-6) },
-      { id: 'n2', recipient_id: 'u-stu', assignment_id: 'a2', deadline_change_id: null, type: 'deadline_changed', message: 'Deadline for "ER Diagram Homework" changed', is_read: true, created_at: at(-80) },
-    ],
-  }
-}
 
 // Embedded relations: table -> embed name -> [foreign key on this table, target table]
 const RELATIONS: Record<string, Record<string, [string, string]>> = {
   assignments: { courses: ['course_id', 'courses'] },
   deadline_changes: { assignments: ['assignment_id', 'assignments'] },
   enrollments: { profiles: ['student_id', 'profiles'] },
+  notifications: { assignments: ['assignment_id', 'assignments'] },
 }
 
 function splitTop(s: string): string[] {

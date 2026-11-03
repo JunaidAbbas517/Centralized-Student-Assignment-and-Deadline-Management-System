@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { btnGhost, Card, ErrorText } from '../components/ui'
 import { formatDateTime } from '../lib/dates'
+import { notifyNotificationsChanged } from '../lib/progress'
 import { supabase } from '../lib/supabase'
 import type { Notification } from '../lib/types'
 
@@ -19,6 +20,7 @@ export default function Notifications() {
     if (error) setError(error.message)
     setItems((data ?? []) as Notification[])
     setLoading(false)
+    notifyNotificationsChanged()
   }, [])
 
   useEffect(() => {
