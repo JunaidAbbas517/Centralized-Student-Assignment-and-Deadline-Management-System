@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react'
-import { ChevronLeft, ChevronRight, Lock, RefreshCw } from 'lucide-react'
+import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
+import DeadlineTimeline from '../components/DeadlineTimeline'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { btnGhost, Card, CourseDot, courseTheme, ErrorText, Pill, Segmented } from '../components/ui'
 import {
-  dayKey, daysFromToday, formatDay, formatDayTime, formatFull, formatStamp, monthGridFull,
+  dayKey, daysFromToday, formatDay, formatFull, monthGridFull,
 } from '../lib/dates'
 import { saveProgress } from '../lib/progress'
-import type { ProgressStatus } from '../lib/types'
+import type { DeadlineChange, ProgressStatus } from '../lib/types'
 import { useAssignments, type AssignmentWithCourse } from '../lib/useAssignments'
 
 interface Entry {
@@ -62,7 +63,7 @@ export default function CalendarPage() {
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <h1 className="mr-2 text-3xl font-bold tracking-tight">{title}</h1>
+        <h1 className="rise mr-2 text-[2rem] font-semibold tracking-tight">{title}</h1>
         <button className={`${btnGhost} !px-2.5`} onClick={() => shift(-1)} aria-label="Previous month"><ChevronLeft size={16} /></button>
         <button className={`${btnGhost} !px-2.5`} onClick={() => shift(1)} aria-label="Next month"><ChevronRight size={16} /></button>
         <button
@@ -169,7 +170,7 @@ export default function CalendarPage() {
 
 function DetailPanel({ assignment: a, changes, people, role, status, onStatus }: {
   assignment: AssignmentWithCourse
-  changes: { id: string; previous_deadline: string; new_deadline: string; changed_by: string; reason: string | null; changed_at: string }[]
+  changes: DeadlineChange[]
   people: Record<string, string>
   role: 'student' | 'instructor'
   status: ProgressStatus
@@ -177,7 +178,6 @@ function DetailPanel({ assignment: a, changes, people, role, status, onStatus }:
 }) {
   const theme = courseTheme(a.course_id)
   const latest = changes[0]
-  const original = changes.length ? changes[changes.length - 1].previous_deadline : a.current_deadline
   const delta = latest ? Math.round((new Date(latest.new_deadline).getTime() - new Date(latest.previous_deadline).getTime()) / 86400000) : 0
   const changedWhen = latest ? (daysFromToday(latest.changed_at) === 0 ? 'today' : formatDay(latest.changed_at)) : ''
 
@@ -215,30 +215,9 @@ function DetailPanel({ assignment: a, changes, people, role, status, onStatus }:
         <Link to={`/assignments/${a.id}`} className={`${btnGhost} mt-5 w-full`}>Open to change deadline</Link>
       )}
 
-      <div className="mt-5">
-        <div className="mb-2 text-sm font-semibold">Deadline history</div>
-        <ol className="space-y-3 text-sm">
-          {changes.map((c) => (
-            <li key={c.id} className="flex gap-3">
-              <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full bg-orange-600" />
-              <div>
-                <div className="font-semibold">{formatDayTime(c.previous_deadline)} → {formatDayTime(c.new_deadline)}</div>
-                {c.reason && <div className="text-slate-600">“{c.reason}”</div>}
-                <div className="text-xs text-slate-500">{people[c.changed_by] ?? 'Instructor'} · {formatStamp(c.changed_at)}</div>
-              </div>
-            </li>
-          ))}
-          <li className="flex gap-3">
-            <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full bg-slate-300" />
-            <div>
-              <div className="font-semibold">Published · due {formatDayTime(original)}</div>
-              <div className="text-xs text-slate-500">{formatStamp(a.created_at)}</div>
-            </div>
-          </li>
-        </ol>
-        <p className="mt-3 flex items-center gap-1.5 text-xs text-slate-500">
-          <Lock size={12} /> History entries are permanent and cannot be edited.
-        </p>
+      <div className="mt-6 border-t border-slate-100 pt-5">
+        <div className="mb-4 text-sm font-semibold">Deadline history</div>
+        <DeadlineTimeline changes={changes} currentDeadline={a.current_deadline} createdAt={a.created_at} people={people} />
       </div>
     </Card>
   )

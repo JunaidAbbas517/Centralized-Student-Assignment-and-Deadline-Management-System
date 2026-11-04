@@ -40,6 +40,14 @@ function splitTop(s: string): string[] {
 export function createDemoClient() {
   const db = seed()
   let session: Session | null = null
+  // `?as=student` or `?as=instructor` in the URL opens the demo already signed in.
+  try {
+    const as = new URLSearchParams(window.location.search).get('as')
+    const who = db.profiles.find((p) => p.role === as)
+    if (who) session = { user: { id: String(who.id) } }
+  } catch {
+    // no URL access; start signed out
+  }
   const listeners = new Set<Listener>()
   const setSession = (next: Session | null) => {
     session = next

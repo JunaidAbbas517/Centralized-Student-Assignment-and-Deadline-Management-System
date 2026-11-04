@@ -1,10 +1,10 @@
-import { RefreshCw } from 'lucide-react'
+import { ChevronRight, RefreshCw } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { formatDay, formatShort, isOverdue, relativeLabel } from '../lib/dates'
 import type { DeadlineChange, ProgressStatus, Role } from '../lib/types'
 import { STATUS_LABEL } from '../lib/types'
 import type { AssignmentWithCourse } from '../lib/useAssignments'
-import { btnGhost, CourseDot, Pill, StatusMenu } from './ui'
+import { CourseDot, Pill, StatusMenu } from './ui'
 
 interface Props {
   rows: AssignmentWithCourse[]
@@ -22,7 +22,7 @@ export default function AssignmentTable({ rows, progress, changed, role, onStatu
 
   return (
     <div>
-      <div className={`hidden border-y border-slate-100 bg-slate-50/60 px-5 py-2 text-xs font-semibold text-slate-500 ${COLS}`}>
+      <div className={`hidden border-y border-slate-100 bg-slate-50/70 px-6 py-2.5 font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500 ${COLS}`}>
         <span>Assignment</span>
         <span>Deadline</span>
         <span>{role === 'student' ? 'Status' : ''}</span>
@@ -35,9 +35,9 @@ export default function AssignmentTable({ rows, progress, changed, role, onStatu
           const rel = relativeLabel(a.current_deadline)
           const change = changed[a.id]
           return (
-            <li key={a.id} className={`flex flex-col gap-2 border-b border-slate-100 px-5 py-3.5 last:border-b-0 ${COLS}`}>
+            <li key={a.id} className={`flex flex-col gap-2 border-b border-slate-100 px-6 py-4 last:border-b-0 hover:bg-slate-50/60 ${COLS}`}>
               <div className="min-w-0">
-                <Link to={`/assignments/${a.id}`} className="font-semibold hover:text-indigo-700">
+                <Link to={`/assignments/${a.id}`} className="font-semibold text-slate-900 hover:text-indigo-700">
                   {a.title}
                 </Link>
                 <div className="mt-0.5 flex items-center gap-1.5 text-sm text-slate-500">
@@ -46,14 +46,14 @@ export default function AssignmentTable({ rows, progress, changed, role, onStatu
                 </div>
               </div>
               <div className="text-sm">
-                <div>{formatShort(a.current_deadline)}</div>
+                <div className="tnum font-medium text-slate-800">{formatShort(a.current_deadline)}</div>
                 {change ? (
-                  <span className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-orange-100 px-2 py-0.5 text-xs font-semibold text-orange-700">
+                  <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-orange-50 px-2 py-0.5 text-xs font-semibold text-orange-700 ring-1 ring-inset ring-orange-200">
                     <RefreshCw size={11} /> Changed from {formatDay(change.previous_deadline)}
                   </span>
                 ) : (
-                  <div className={`text-xs ${rel.overdue && status !== 'completed' ? 'font-medium text-red-700' : 'text-slate-500'}`}>
-                    {rel.text}
+                  <div className={`mt-0.5 font-mono text-[11px] ${rel.overdue && status !== 'completed' && role === 'student' ? 'font-medium text-rose-700' : 'text-slate-500'}`}>
+                    {role === 'instructor' && rel.overdue ? 'closed' : rel.text}
                   </div>
                 )}
               </div>
@@ -66,7 +66,7 @@ export default function AssignmentTable({ rows, progress, changed, role, onStatu
                 {role === 'student' && onStatus ? (
                   <StatusMenu value={status} onChange={(s) => onStatus(a, s)} />
                 ) : role === 'instructor' ? (
-                  <Link to={`/assignments/${a.id}`} className={btnGhost}>Manage</Link>
+                  <Link to={`/assignments/${a.id}`} className="tap inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 ring-1 ring-inset ring-transparent hover:bg-white hover:text-slate-900 hover:ring-slate-200">Manage <ChevronRight size={14} aria-hidden="true" /></Link>
                 ) : null}
               </div>
             </li>
