@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { GraduationCap, Presentation } from 'lucide-react'
+import { Eye, EyeOff, GraduationCap, Presentation } from 'lucide-react'
 import { appUrl, isDemo, supabase } from '../lib/supabase'
 import { Environment } from '../components/Layout'
 import { BrandMark, btn, ErrorText, input, label } from '../components/ui'
@@ -65,6 +65,7 @@ export default function Login() {
   const [mode, setMode] = useState<Mode>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [fullName, setFullName] = useState('')
   const [error, setError] = useState<string | null>(linkError)
   const [info, setInfo] = useState<string | null>(null)
@@ -164,17 +165,29 @@ export default function Login() {
                     </button>
                   )}
                 </div>
-                <input
-                  id="password"
-                  className={`${input} mt-1.5`}
-                  type="password"
-                  autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-                  minLength={mode === 'signup' ? 8 : undefined}
-                  placeholder={mode === 'signup' ? 'At least 8 characters' : ''}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
+                <div className="relative mt-1.5">
+                  <input
+                    id="password"
+                    className={`${input} pr-12`}
+                    type={showPassword ? 'text' : 'password'}
+                    autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                    minLength={mode === 'signup' ? 8 : undefined}
+                    placeholder={mode === 'signup' ? 'At least 8 characters' : ''}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                  />
+                  <button
+                    type="button"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    aria-pressed={showPassword}
+                    title={showPassword ? 'Hide password' : 'Show password'}
+                    className="tap absolute inset-y-0 right-0 flex w-11 items-center justify-center rounded-r-xl text-slate-400 hover:text-slate-700 focus-visible:text-indigo-600"
+                    onClick={() => setShowPassword((v) => !v)}
+                  >
+                    {showPassword ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
+                  </button>
+                </div>
               </div>
             )}
             <ErrorText message={error} />
