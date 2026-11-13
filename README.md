@@ -8,15 +8,29 @@ React + TypeScript + Vite frontend, Supabase (Auth + PostgreSQL + RLS) backend, 
 2. In the SQL editor, run [supabase/schema.sql](supabase/schema.sql) once.
 3. Copy `app/.env.example` to `app/.env` and fill in the project URL and **anon** key
    (Project Settings → API). Never put the `service_role` key in the frontend.
-4. For quick testing, turn off "Confirm email" under Authentication → Providers → Email
+4. Under Authentication → URL Configuration, set the **Site URL** to the deployed app
+   (e.g. `https://<user>.github.io/<repo>/`) and add both of these to **Redirect URLs**:
+   `http://localhost:5173/**` and `https://<user>.github.io/<repo>/**`.
+   Confirmation and password-reset emails link back here.
+5. For quick testing, turn off "Confirm email" under Authentication → Providers → Email
    (the default mail sender is heavily rate-limited).
-5. Run:
+6. Run:
    ```
    cd app
    npm install
    npm run dev
    npm test
    ```
+
+## Authentication
+
+- Email and password sign-up and log-in via Supabase Auth (PKCE flow, so email links use
+  `?code=` and do not clash with the `#/` routes).
+- "Forgot password?" emails a reset link; opening it shows a set-new-password screen.
+- The Account page (click your name in the sidebar) edits your display name and password.
+- Open email links in the same browser you requested them from (PKCE requirement).
+- Notifications: deadline changes and new assignments notify enrolled students automatically;
+  reminders for open work due within 48 hours are created when a student opens the app.
 
 ## Creating an instructor
 

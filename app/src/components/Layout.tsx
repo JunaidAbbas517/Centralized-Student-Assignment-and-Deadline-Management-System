@@ -48,7 +48,13 @@ export default function Layout() {
   useEffect(() => {
     if (!session) return
     let cancelled = false
+    // In-app reminders: the database creates one per open assignment due within 48 hours.
+    let remindersDone = !isStudent
     const load = async () => {
+      if (!remindersDone) {
+        remindersDone = true
+        await supabase.rpc('generate_my_reminders')
+      }
       const n = await supabase.from('notifications').select('id', { count: 'exact', head: true }).eq('is_read', false)
       const c = await supabase.from('courses').select('id, course_code')
       if (cancelled) return
@@ -66,7 +72,7 @@ export default function Layout() {
       clearInterval(timer)
       window.removeEventListener('notifications-changed', load)
     }
-  }, [session])
+  }, [session, isStudent])
 
   const items = ITEMS.filter((i) => !i.studentOnly || isStudent)
   const name = profile?.full_name || profile?.email || ''
@@ -121,16 +127,24 @@ export default function Layout() {
           ))}
         </nav>
 
-        <div className="mt-auto flex items-center gap-3 rounded-2xl border border-slate-200/80 bg-white/80 p-2.5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-indigo-100 to-indigo-200 text-[13px] font-semibold text-indigo-800">
-            {initials(name)}
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold">{name}</div>
-            <div className="truncate text-xs text-slate-500">
-              {roleLabel} · {courseCount} {courseCount === 1 ? 'course' : 'courses'}
+        <div className="mt-auto flex items-center gap-1 rounded-2xl border border-slate-200/80 bg-white/80 p-1.5">
+          <NavLink
+            to="/account"
+            title="Your account"
+            className={({ isActive }) =>
+              `flex min-w-0 flex-1 items-center gap-3 rounded-xl p-1 hover:bg-slate-50 ${isActive ? 'bg-slate-50' : ''}`
+            }
+          >
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-100 to-indigo-200 text-[13px] font-semibold text-indigo-800">
+              {initials(name)}
             </div>
-          </div>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-semibold">{name}</div>
+              <div className="truncate text-xs text-slate-500">
+                {roleLabel} · {courseCount} {courseCount === 1 ? 'course' : 'courses'}
+              </div>
+            </div>
+          </NavLink>
           <button
             aria-label="Log out"
             title="Log out"
@@ -147,7 +161,16 @@ export default function Layout() {
         <div className="flex items-center gap-2.5 px-4 pt-3">
           <BrandMark size={30} />
           <span className="font-display font-semibold tracking-tight">DeadlineHub</span>
-          <button aria-label="Log out" className="tap ml-auto rounded-lg p-2 text-slate-500 hover:bg-slate-100" onClick={() => supabase.auth.signOut()}>
+          <NavLink
+            to="/account"
+            aria-label="Your account"
+            className="tap ml-auto flex items-center justify-center p-1"
+          >
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-indigo-100 to-indigo-200 text-[12px] font-semibold text-indigo-800">
+              {initials(name)}
+            </span>
+          </NavLink>
+          <button aria-label="Log out" className="tap rounded-lg p-2 text-slate-500 hover:bg-slate-100" onClick={() => supabase.auth.signOut()}>
             <LogOut size={18} />
           </button>
         </div>

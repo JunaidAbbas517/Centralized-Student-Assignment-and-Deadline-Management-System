@@ -208,10 +208,28 @@ export function createDemoClient() {
       db.enrollments.filter((e) => e.course_id === a.course_id).forEach((e) =>
         db.notifications.push({
           id: uid(), recipient_id: e.student_id, assignment_id: a.id, deadline_change_id: change.id,
-          type: 'deadline_changed', message: `Deadline for "${a.title}" changed`, is_read: false, created_at: change.changed_at,
+          type: 'deadline_changed', message: `Deadline changed: ${a.title}`, is_read: false, created_at: change.changed_at,
         }),
       )
       return { data: change.id, error: null }
+    }
+    if (name === 'generate_my_reminders') {
+      const me = session?.user.id
+      const now = Date.now()
+      let created = 0
+      for (const a of db.assignments) {
+        const due = new Date(String(a.current_deadline)).getTime()
+        if (due <= now || due > now + 48 * 3600 * 1000 || !enrolledIn(String(a.course_id))) continue
+        const done = db.assignment_progress.some((p) => p.student_id === me && p.assignment_id === a.id && p.status === 'completed')
+        const sent = db.notifications.some((n) => n.recipient_id === me && n.assignment_id === a.id && n.type === 'reminder')
+        if (done || sent) continue
+        db.notifications.push({
+          id: uid(), recipient_id: me, assignment_id: a.id, deadline_change_id: null, type: 'reminder',
+          message: `Reminder: ${a.title} is due within 2 days`, is_read: false, created_at: new Date().toISOString(),
+        })
+        created++
+      }
+      return { data: created, error: null }
     }
     return { data: null, error: { message: `Unknown function ${name}` } }
   }
@@ -238,6 +256,8 @@ export function createDemoClient() {
       setSession(null)
       return { error: null }
     },
+    resetPasswordForEmail: async () => ({ data: {}, error: null }),
+    updateUser: async () => ({ data: { user: session?.user ?? null }, error: null }),
   }
 
   return { from: (table: string) => new Query(table), rpc, auth }

@@ -12,16 +12,28 @@ import Courses from './pages/Courses'
 import Dashboard from './pages/Dashboard'
 import Login from './pages/Login'
 import Notifications from './pages/Notifications'
+import Account from './pages/Account'
+import ResetPassword from './pages/ResetPassword'
+
+function Splash({ text }: { text: string }) {
+  return (
+    <div className="flex min-h-screen items-center justify-center" role="status">
+      <p className="font-mono text-xs uppercase tracking-[0.1em] text-slate-500">{text}</p>
+    </div>
+  )
+}
 
 function Gate() {
-  const { session, profile, loading } = useAuth()
-  if (loading) return <p className="p-6">Loading…</p>
+  const { session, profile, loading, recovering } = useAuth()
+  if (loading) return <Splash text="Loading…" />
   if (!session) return <Login />
-  if (!profile) return <p className="p-6">Loading profile…</p>
+  if (recovering) return <ResetPassword />
+  if (!profile) return <Splash text="Loading your profile…" />
   return (
     <Routes>
       <Route element={<Layout />}>
         <Route index element={<Dashboard />} />
+        <Route path="account" element={<Account />} />
         <Route path="courses" element={<Courses />} />
         <Route path="courses/:id" element={<CourseDetail />} />
         <Route path="assignments/:id" element={<AssignmentDetail />} />

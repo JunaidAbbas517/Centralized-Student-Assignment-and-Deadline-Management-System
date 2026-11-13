@@ -9,6 +9,15 @@ export const isDemo = import.meta.env.VITE_DEMO === 'true'
 export const isConfigured = isDemo || Boolean(url && anonKey)
 
 // Only the public anon key is ever used in the browser; access is enforced by RLS.
+// PKCE puts the email-link code in the query string (?code=…), which leaves the
+// HashRouter's #/route fragment alone.
 export const supabase: SupabaseClient = isDemo
   ? (createDemoClient() as unknown as SupabaseClient)
-  : createClient(url ?? 'http://localhost', anonKey ?? 'missing')
+  : createClient(url ?? 'http://localhost', anonKey ?? 'missing', {
+      auth: { flowType: 'pkce', persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+    })
+
+/** Where Supabase email links (confirm, reset) send the user back to: this app's own page. */
+export function appUrl(params = ''): string {
+  return `${window.location.origin}${window.location.pathname}${params}`
+}

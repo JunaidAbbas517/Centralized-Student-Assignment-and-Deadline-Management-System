@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { GraduationCap, Presentation } from 'lucide-react'
-import { isDemo, supabase } from '../lib/supabase'
+import { appUrl, isDemo, supabase } from '../lib/supabase'
 import { Environment } from '../components/Layout'
 import { BrandMark, btn, ErrorText, input, label } from '../components/ui'
 
@@ -30,14 +30,51 @@ function RibbonArt() {
   )
 }
 
+type Mode = 'login' | 'signup' | 'forgot'
+
+const COPY: Record<Mode, { title: string; sub: string; cta: string }> = {
+  login: { title: 'Welcome back', sub: 'Log in to see your courses and deadlines.', cta: 'Log in' },
+  signup: {
+    title: 'Create your account',
+    sub: 'New accounts start as students. Your instructor gives you a course code.',
+    cta: 'Create account',
+  },
+  forgot: { title: 'Reset your password', sub: 'We will email you a link to choose a new one.', cta: 'Send reset link' },
+}
+
+/** Supabase reports expired or invalid email links in the URL (?error_description=…). */
+function linkError(): string | null {
+  try {
+    const q = new URLSearchParams(window.location.search)
+    const h = new URLSearchParams(window.location.hash.replace(/^#\/?/, ''))
+    const msg = q.get('error_description') ?? h.get('error_description')
+    return msg ? `${msg.replace(/\+/g, ' ')}. Request a new link below.` : null
+  } catch {
+    return null
+  }
+}
+
+function friendly(message: string): string {
+  if (/invalid login credentials/i.test(message)) return 'That email and password do not match an account.'
+  if (/email not confirmed/i.test(message)) return 'Confirm your email first. Check your inbox for the link.'
+  if (/rate limit/i.test(message)) return 'Too many attempts. Wait a minute and try again.'
+  return message
+}
+
 export default function Login() {
-  const [mode, setMode] = useState<'login' | 'signup'>('login')
+  const [mode, setMode] = useState<Mode>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [fullName, setFullName] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(linkError)
   const [info, setInfo] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+
+  function switchMode(next: Mode) {
+    setMode(next)
+    setError(null)
+    setInfo(null)
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault()
@@ -46,15 +83,23 @@ export default function Login() {
     setInfo(null)
     if (mode === 'login') {
       const { error } = await supabase.auth.signInWithPassword({ email, password })
-      if (error) setError(error.message)
-    } else {
+      if (error) setError(friendly(error.message))
+    } else if (mode === 'signup') {
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
-        options: { data: { full_name: fullName } },
+        options: { data: { full_name: fullName.trim() }, emailRedirectTo: appUrl() },
       })
-      if (error) setError(error.message)
-      else if (!data.session) setInfo('Account created. Check your email to confirm, then log in.')
+      if (error) setError(friendly(error.message))
+      else if (!data.session) {
+        setInfo(`Account created. We sent a confirmation link to ${email}. Open it in this browser to finish.`)
+        setPassword('')
+      }
+    } else {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: appUrl('?reset=1') })
+      if (error) setError(friendly(error.message))
+      // Same message whether or not the account exists, so emails cannot be probed.
+      else setInfo(`If ${email} has an account, a reset link is on its way. Open it in this browser.`)
     }
     setBusy(false)
   }
@@ -97,12 +142,8 @@ export default function Login() {
             <BrandMark />
             <span className="font-display text-lg font-semibold tracking-tight">DeadlineHub</span>
           </div>
-          <h2 className="text-[1.9rem] font-semibold leading-tight tracking-tight">
-            {mode === 'login' ? 'Welcome back' : 'Create your account'}
-          </h2>
-          <p className="mt-1.5 text-sm text-slate-500">
-            {mode === 'login' ? 'Log in to see your courses and deadlines.' : 'New accounts start as students. Your instructor gives you a course code.'}
-          </p>
+          <h2 className="text-[1.9rem] font-semibold leading-tight tracking-tight">{COPY[mode].title}</h2>
+          <p className="mt-1.5 text-sm text-slate-500">{COPY[mode].sub}</p>
 
           <form onSubmit={submit} className="mt-8 space-y-4">
             {mode === 'signup' && (
@@ -113,28 +154,39 @@ export default function Login() {
             <label className="block text-sm font-medium text-slate-700">Email
               <input className={`${input} mt-1.5`} type="email" autoComplete="email" placeholder="you@university.edu" value={email} onChange={(e) => setEmail(e.target.value)} required />
             </label>
-            <label className="block text-sm font-medium text-slate-700">Password
-              <input
-                className={`${input} mt-1.5`}
-                type="password"
-                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-                minLength={8}
-                placeholder="At least 8 characters"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-              />
-            </label>
+            {mode !== 'forgot' && (
+              <div>
+                <div className="flex items-baseline justify-between">
+                  <label htmlFor="password" className="text-sm font-medium text-slate-700">Password</label>
+                  {mode === 'login' && (
+                    <button type="button" className="text-xs font-medium text-indigo-700 hover:text-indigo-800" onClick={() => switchMode('forgot')}>
+                      Forgot password?
+                    </button>
+                  )}
+                </div>
+                <input
+                  id="password"
+                  className={`${input} mt-1.5`}
+                  type="password"
+                  autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                  minLength={mode === 'signup' ? 8 : undefined}
+                  placeholder={mode === 'signup' ? 'At least 8 characters' : ''}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
+              </div>
+            )}
             <ErrorText message={error} />
-            {info && <p className="text-sm text-emerald-700">{info}</p>}
+            {info && <p role="status" className="rounded-xl bg-emerald-50 px-3.5 py-2.5 text-sm text-emerald-800 ring-1 ring-inset ring-emerald-200">{info}</p>}
             <button className={`${btn} w-full !py-2.5`} disabled={busy}>
-              {busy ? 'One moment…' : mode === 'login' ? 'Log in' : 'Create account'}
+              {busy ? 'One moment…' : COPY[mode].cta}
             </button>
           </form>
 
           <p className="mt-5 text-center text-sm text-slate-500">
-            {mode === 'login' ? 'New here?' : 'Already have an account?'}{' '}
-            <button className="font-semibold text-indigo-700 hover:text-indigo-800" onClick={() => setMode(mode === 'login' ? 'signup' : 'login')}>
+            {mode === 'login' ? 'New here?' : mode === 'signup' ? 'Already have an account?' : 'Remembered it?'}{' '}
+            <button className="font-semibold text-indigo-700 hover:text-indigo-800" onClick={() => switchMode(mode === 'login' ? 'signup' : 'login')}>
               {mode === 'login' ? 'Create an account' : 'Log in'}
             </button>
           </p>
