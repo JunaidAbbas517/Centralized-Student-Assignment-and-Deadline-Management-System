@@ -19,7 +19,7 @@ export default function CourseDetail() {
   const [course, setCourse] = useState<Course | null>(null)
   const [students, setStudents] = useState<Student[]>([])
   const [loading, setLoading] = useState(true)
-  const role = profile?.role ?? 'student'
+  const role = profile?.role === 'instructor' ? 'instructor' : 'student'
   const { assignments, progress, changed, reload } = useAssignments(role)
 
   const loadCourse = useCallback(async () => {

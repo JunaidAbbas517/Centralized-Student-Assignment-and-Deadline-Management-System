@@ -10,7 +10,7 @@ type Tab = 'all' | 'open' | 'overdue' | 'completed'
 
 export default function Assignments() {
   const { profile } = useAuth()
-  const role = profile?.role ?? 'student'
+  const role = profile?.role === 'instructor' ? 'instructor' : 'student'
   const { assignments, progress, changed, loading, error, reload } = useAssignments(role)
   const [tab, setTab] = useState<Tab>('all')
   const [query, setQuery] = useState('')

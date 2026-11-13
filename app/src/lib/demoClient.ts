@@ -77,6 +77,8 @@ export function createDemoClient() {
       }
       case 'notifications':
         return row.recipient_id === session?.user.id
+      case 'profiles':
+        return me()?.role === 'admin' || me()?.role === 'instructor' || row.id === session?.user.id || row.role === 'instructor'
       case 'assignment_progress':
         return row.student_id === session?.user.id
       default:
@@ -213,6 +215,44 @@ export function createDemoClient() {
       )
       return { data: change.id, error: null }
     }
+    if (name === 'set_instructor_status') {
+      if (me()?.role !== 'admin') return { data: null, error: { message: 'Only an admin can verify instructors' } }
+      const p = db.profiles.find((x) => x.id === args.p_user && x.role === 'instructor')
+      if (!p) return { data: null, error: { message: 'That user is not an instructor' } }
+      p.status = args.p_status
+      return { data: null, error: null }
+    }
+    if (name === 'admin_stats') {
+      if (me()?.role !== 'admin') return { data: null, error: { message: 'Only an admin can see platform statistics' } }
+      const now = Date.now()
+      const count = (rows: Row[], f: (r: Row) => boolean) => rows.filter(f).length
+      const P = db.profiles
+      return {
+        data: {
+          students: count(P, (p) => p.role === 'student'),
+          instructors: count(P, (p) => p.role === 'instructor' && p.status === 'active'),
+          pending: count(P, (p) => p.role === 'instructor' && p.status === 'pending'),
+          rejected: count(P, (p) => p.role === 'instructor' && p.status === 'rejected'),
+          courses: count(db.courses, (c) => !c.archived),
+          archived_courses: count(db.courses, (c) => !!c.archived),
+          assignments: db.assignments.length,
+          upcoming: count(db.assignments, (a) => new Date(String(a.current_deadline)).getTime() > now),
+          enrollments: db.enrollments.length,
+          deadline_changes: db.deadline_changes.length,
+          new_users_7d: count(P, (p) => now - new Date(String(p.created_at)).getTime() < 7 * 864e5),
+          completed: count(db.assignment_progress, (x) => x.status === 'completed'),
+          course_list: db.courses
+            .map((c) => ({
+              id: c.id, name: c.name, course_code: c.course_code, archived: c.archived,
+              instructor: P.find((p) => p.id === c.instructor_id)?.full_name ?? '',
+              students: count(db.enrollments, (e) => e.course_id === c.id),
+              assignments: count(db.assignments, (a) => a.course_id === c.id),
+            }))
+            .sort((x, y) => y.students - x.students),
+        },
+        error: null,
+      }
+    }
     if (name === 'generate_my_reminders') {
       const me = session?.user.id
       const now = Date.now()
@@ -246,9 +286,13 @@ export function createDemoClient() {
       setSession({ user: { id: String(p.id) } })
       return { data: { session }, error: null }
     },
-    signUp: async ({ email, options }: { email: string; options?: { data?: { full_name?: string } } }) => {
+    signUp: async ({ email, options }: { email: string; options?: { data?: { full_name?: string; requested_role?: string } } }) => {
       const id = uid()
-      db.profiles.push({ id, full_name: options?.data?.full_name ?? '', email, role: 'student' })
+      const instructor = options?.data?.requested_role === 'instructor'
+      db.profiles.push({
+        id, full_name: options?.data?.full_name ?? '', email, created_at: new Date().toISOString(),
+        role: instructor ? 'instructor' : 'student', status: instructor ? 'pending' : 'active',
+      })
       setSession({ user: { id } })
       return { data: { session }, error: null }
     },

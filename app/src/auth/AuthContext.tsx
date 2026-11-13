@@ -1,7 +1,7 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
-import type { Profile } from '../lib/types'
+import type { Profile, Role } from '../lib/types'
 
 interface AuthState {
   session: Session | null
@@ -10,10 +10,41 @@ interface AuthState {
   /** True after the user opened a password-reset link; the app asks for a new password. */
   recovering: boolean
   endRecovery: () => void
+  /** Set when someone logs in on the wrong tab (e.g. a student account on "Admin"). */
+  loginError: string | null
+  clearLoginError: () => void
   refreshProfile: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthState | undefined>(undefined)
+
+const EXPECTED_KEY = 'dh-expected-role'
+const ROLE_NAME: Record<Role, string> = { student: 'student', instructor: 'instructor', admin: 'admin' }
+
+/** The login screen records which role tab was used, so the account can be checked against it. */
+export function expectRole(role: Role) {
+  try {
+    sessionStorage.setItem(EXPECTED_KEY, role)
+  } catch {
+    // storage blocked: skip the check
+  }
+}
+
+function readExpected(): Role | null {
+  try {
+    return sessionStorage.getItem(EXPECTED_KEY) as Role | null
+  } catch {
+    return null
+  }
+}
+
+function clearExpected() {
+  try {
+    sessionStorage.removeItem(EXPECTED_KEY)
+  } catch {
+    // ignore
+  }
+}
 
 /** Reset links come back as ?reset=1&code=…; the code is exchanged by supabase-js. */
 function urlSaysRecovery(): boolean {
@@ -38,14 +69,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
   const [recovering, setRecovering] = useState(urlSaysRecovery)
+  const [loginError, setLoginError] = useState<string | null>(null)
+  const currentUser = useRef<string | undefined>(undefined)
 
   async function loadProfile(userId: string | undefined) {
+    currentUser.current = userId
     if (!userId) {
       setProfile(null)
       return
     }
     const { data } = await supabase.from('profiles').select('*').eq('id', userId).single()
-    setProfile((data as Profile) ?? null)
+    if (currentUser.current !== userId) return // signed out or switched while loading
+    const next = (data as Profile) ?? null
+    const expected = readExpected()
+    if (next && expected && next.role !== expected) {
+      const article = next.role === 'student' ? 'a' : 'an'
+      setLoginError(`This is ${article} ${ROLE_NAME[next.role]} account. Choose "${next.role[0].toUpperCase()}${next.role.slice(1)}" above to log in.`)
+      setProfile(null)
+      currentUser.current = undefined
+      clearExpected()
+      await supabase.auth.signOut()
+      return
+    }
+    if (next) clearExpected()
+    setProfile(next)
   }
 
   useEffect(() => {
@@ -76,6 +123,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loading,
         recovering,
         endRecovery: () => setRecovering(false),
+        loginError,
+        clearLoginError: () => setLoginError(null),
         refreshProfile: () => loadProfile(session?.user.id),
       }}
     >

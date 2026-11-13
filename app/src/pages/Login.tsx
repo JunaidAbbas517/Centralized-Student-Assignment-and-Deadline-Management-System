@@ -1,8 +1,10 @@
 import { useState, type FormEvent } from 'react'
-import { Eye, EyeOff, GraduationCap, Presentation } from 'lucide-react'
+import { Eye, EyeOff, GraduationCap, Presentation, ShieldCheck } from 'lucide-react'
+import { expectRole, useAuth } from '../auth/AuthContext'
+import type { Role } from '../lib/types'
 import { appUrl, isDemo, supabase } from '../lib/supabase'
 import { Environment } from '../components/Layout'
-import { BrandMark, btn, ErrorText, input, label } from '../components/ui'
+import { BrandMark, btn, ErrorText, input, label, Segmented } from '../components/ui'
 
 /** A small drawn version of the dashboard ribbon, used as the login artwork. */
 function RibbonArt() {
@@ -61,20 +63,51 @@ function friendly(message: string): string {
   return message
 }
 
+const ROLE_HINT: Record<Mode, Partial<Record<Role, string>>> = {
+  login: {
+    student: 'Log in to see your courses and deadlines.',
+    instructor: 'Log in to manage your courses, assignments and deadlines.',
+    admin: 'Log in to verify instructors and see platform activity.',
+  },
+  signup: {
+    student: 'Join your courses with the code your instructor gives you.',
+    instructor: 'Your account will be reviewed by an admin before you can create courses.',
+  },
+  forgot: {},
+}
+
+// The form remounts while a login is checked; keep what the user picked across that.
+const remembered: { role: Role; email: string } = { role: 'student', email: '' }
+
 export default function Login() {
+  const { loginError, clearLoginError } = useAuth()
   const [mode, setMode] = useState<Mode>('login')
-  const [email, setEmail] = useState('')
+  const [role, setRole] = useState<Role>(remembered.role)
+  const [email, setEmail] = useState(remembered.email)
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [fullName, setFullName] = useState('')
-  const [error, setError] = useState<string | null>(linkError)
+  const [error, setError] = useState<string | null>(() => linkError())
+  const shownError = error ?? loginError
   const [info, setInfo] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
   function switchMode(next: Mode) {
     setMode(next)
+    if (next === 'signup' && role === 'admin') {
+      setRole('student')
+      remembered.role = 'student'
+    }
     setError(null)
     setInfo(null)
+    clearLoginError()
+  }
+
+  function pickRole(next: Role) {
+    setRole(next)
+    remembered.role = next
+    setError(null)
+    clearLoginError()
   }
 
   async function submit(e: FormEvent) {
@@ -82,17 +115,21 @@ export default function Login() {
     setBusy(true)
     setError(null)
     setInfo(null)
+    clearLoginError()
+    remembered.email = email
     if (mode === 'login') {
+      expectRole(role)
       const { error } = await supabase.auth.signInWithPassword({ email, password })
       if (error) setError(friendly(error.message))
     } else if (mode === 'signup') {
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
-        options: { data: { full_name: fullName.trim() }, emailRedirectTo: appUrl() },
+        options: { data: { full_name: fullName.trim(), requested_role: role }, emailRedirectTo: appUrl() },
       })
       if (error) setError(friendly(error.message))
-      else if (!data.session) {
+      else if (data.session) expectRole(role)
+      else {
         setInfo(`Account created. We sent a confirmation link to ${email}. Open it in this browser to finish.`)
         setPassword('')
       }
@@ -144,9 +181,31 @@ export default function Login() {
             <span className="font-display text-lg font-semibold tracking-tight">DeadlineHub</span>
           </div>
           <h2 className="text-[1.9rem] font-semibold leading-tight tracking-tight">{COPY[mode].title}</h2>
-          <p className="mt-1.5 text-sm text-slate-500">{COPY[mode].sub}</p>
+          <p className="mt-1.5 text-sm text-slate-500">{ROLE_HINT[mode][role] ?? COPY[mode].sub}</p>
 
-          <form onSubmit={submit} className="mt-8 space-y-4">
+          {mode !== 'forgot' && (
+            <div className="mt-7">
+              <p className={`${label} mb-2`}>{mode === 'login' ? 'Log in as' : 'I am'}</p>
+              <Segmented<Role>
+                value={role}
+                onChange={pickRole}
+                options={
+                  mode === 'login'
+                    ? [
+                        { value: 'student', label: 'Student' },
+                        { value: 'instructor', label: 'Instructor' },
+                        { value: 'admin', label: 'Admin' },
+                      ]
+                    : [
+                        { value: 'student', label: 'Student' },
+                        { value: 'instructor', label: 'Instructor' },
+                      ]
+                }
+              />
+            </div>
+          )}
+
+          <form onSubmit={submit} className={`${mode === 'forgot' ? 'mt-8' : 'mt-5'} space-y-4`}>
             {mode === 'signup' && (
               <label className="block text-sm font-medium text-slate-700">Full name
                 <input className={`${input} mt-1.5`} autoComplete="name" value={fullName} onChange={(e) => setFullName(e.target.value)} required />
@@ -190,7 +249,7 @@ export default function Login() {
                 </div>
               </div>
             )}
-            <ErrorText message={error} />
+            <ErrorText message={shownError} />
             {info && <p role="status" className="rounded-xl bg-emerald-50 px-3.5 py-2.5 text-sm text-emerald-800 ring-1 ring-inset ring-emerald-200">{info}</p>}
             <button className={`${btn} w-full !py-2.5`} disabled={busy}>
               {busy ? 'One moment…' : COPY[mode].cta}
@@ -211,20 +270,24 @@ export default function Login() {
                 <span className={label}>Design preview</span>
                 <span className="h-px flex-1 bg-slate-200" />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-2.5">
                 {([
                   ['Student', 'student@demo.edu', GraduationCap, 'Alex Chen'],
                   ['Instructor', 'instructor@demo.edu', Presentation, 'Dr. Wang Lin'],
-                ] as const).map(([role, demoEmail, Icon, who]) => (
+                  ['Admin', 'admin@demo.edu', ShieldCheck, 'Site Admin'],
+                ] as const).map(([demoRole, demoEmail, Icon, who]) => (
                   <button
                     key={demoEmail}
                     type="button"
                     className="tap group rounded-2xl border border-slate-200 bg-white/80 p-3.5 text-left hover:border-indigo-200 hover:bg-white hover:shadow-[0_8px_24px_-14px_rgba(84,67,204,.45)]"
-                    onClick={() => void supabase.auth.signInWithPassword({ email: demoEmail, password: 'demo' })}
+                    onClick={() => {
+                      expectRole(demoRole.toLowerCase() as Role)
+                      void supabase.auth.signInWithPassword({ email: demoEmail, password: 'demo' })
+                    }}
                   >
                     <Icon size={18} className="text-slate-400 group-hover:text-indigo-600" aria-hidden="true" />
-                    <div className="mt-2 text-sm font-semibold text-slate-900">View as {role}</div>
-                    <div className="text-xs text-slate-500">{who}, sample data</div>
+                    <div className="mt-2 text-sm font-semibold text-slate-900">{demoRole}</div>
+                    <div className="truncate text-xs text-slate-500">{who}</div>
                   </button>
                 ))}
               </div>

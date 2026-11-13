@@ -1,4 +1,5 @@
-export type Role = 'student' | 'instructor'
+export type Role = 'student' | 'instructor' | 'admin'
+export type AccountStatus = 'active' | 'pending' | 'rejected'
 export type ProgressStatus = 'pending' | 'in_progress' | 'completed'
 
 export interface Profile {
@@ -6,6 +7,8 @@ export interface Profile {
   full_name: string
   email: string
   role: Role
+  status: AccountStatus
+  created_at?: string
 }
 
 export interface Course {

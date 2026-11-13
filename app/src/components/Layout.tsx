@@ -1,21 +1,27 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
-  Bell, BookOpen, CalendarDays, FileText, History, LayoutGrid, LogOut, type LucideIcon,
+  Bell, BookOpen, CalendarDays, FileText, History, LayoutGrid, LogOut, ShieldCheck, Users, type LucideIcon,
 } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext'
 import { supabase } from '../lib/supabase'
 import { BrandMark, label, registerCourses } from './ui'
 
-interface Item { to: string; label: string; icon: LucideIcon; end?: boolean; studentOnly?: boolean }
+interface Item { to: string; label: string; icon: LucideIcon; end?: boolean; studentOnly?: boolean; badge?: 'unread' | 'pending' }
 
 const ITEMS: Item[] = [
   { to: '/', label: 'Dashboard', icon: LayoutGrid, end: true },
   { to: '/calendar', label: 'Calendar', icon: CalendarDays },
   { to: '/courses', label: 'Courses', icon: BookOpen },
   { to: '/assignments', label: 'Assignments', icon: FileText },
-  { to: '/notifications', label: 'Notifications', icon: Bell, studentOnly: true },
+  { to: '/notifications', label: 'Notifications', icon: Bell, studentOnly: true, badge: 'unread' },
   { to: '/history', label: 'Deadline history', icon: History },
+]
+
+const ADMIN_ITEMS: Item[] = [
+  { to: '/', label: 'Overview', icon: LayoutGrid, end: true },
+  { to: '/instructors', label: 'Verify instructors', icon: ShieldCheck, badge: 'pending' },
+  { to: '/users', label: 'All users', icon: Users },
 ]
 
 function initials(name: string): string {
@@ -41,9 +47,11 @@ export default function Layout() {
   const { pathname } = useLocation()
   const [unread, setUnread] = useState(0)
   const [courseCount, setCourseCount] = useState(0)
+  const [pendingCount, setPendingCount] = useState(0)
   // Course colours are fixed here, before any page renders, so they match everywhere.
   const [ready, setReady] = useState(false)
   const isStudent = profile?.role === 'student'
+  const isAdmin = profile?.role === 'admin'
 
   useEffect(() => {
     if (!session) return
@@ -54,6 +62,13 @@ export default function Layout() {
       if (!remindersDone) {
         remindersDone = true
         await supabase.rpc('generate_my_reminders')
+      }
+      if (isAdmin) {
+        const p = await supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'instructor').eq('status', 'pending')
+        if (cancelled) return
+        setPendingCount(p.count ?? 0)
+        setReady(true)
+        return
       }
       const n = await supabase.from('notifications').select('id', { count: 'exact', head: true }).eq('is_read', false)
       const c = await supabase.from('courses').select('id, course_code')
@@ -67,16 +82,19 @@ export default function Layout() {
     void load()
     const timer = setInterval(load, 30000)
     window.addEventListener('notifications-changed', load)
+    window.addEventListener('admin-changed', load)
     return () => {
       cancelled = true
       clearInterval(timer)
       window.removeEventListener('notifications-changed', load)
+      window.removeEventListener('admin-changed', load)
     }
-  }, [session, isStudent])
+  }, [session, isStudent, isAdmin])
 
-  const items = ITEMS.filter((i) => !i.studentOnly || isStudent)
+  const items = isAdmin ? ADMIN_ITEMS : ITEMS.filter((i) => !i.studentOnly || isStudent)
+  const badgeFor = (i: Item) => (i.badge === 'unread' ? unread : i.badge === 'pending' ? pendingCount : 0)
   const name = profile?.full_name || profile?.email || ''
-  const roleLabel = isStudent ? 'Student' : 'Instructor'
+  const roleLabel = isAdmin ? 'Admin' : isStudent ? 'Student' : 'Instructor'
 
   return (
     <div className="min-h-screen text-slate-900 md:flex">
@@ -118,8 +136,8 @@ export default function Layout() {
                   />
                   <item.icon size={18} className={isActive ? 'text-indigo-600' : 'text-slate-400 group-hover:text-slate-600'} />
                   {item.label}
-                  {item.to === '/notifications' && unread > 0 && (
-                    <span className="ml-auto rounded-full bg-indigo-600 px-2 py-0.5 font-mono text-[10px] font-medium text-white">{unread}</span>
+                  {badgeFor(item) > 0 && (
+                    <span className="ml-auto rounded-full bg-indigo-600 px-2 py-0.5 font-mono text-[10px] font-medium text-white">{badgeFor(item)}</span>
                   )}
                 </>
               )}
@@ -141,7 +159,7 @@ export default function Layout() {
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-semibold">{name}</div>
               <div className="truncate text-xs text-slate-500">
-                {roleLabel} · {courseCount} {courseCount === 1 ? 'course' : 'courses'}
+                {isAdmin ? 'Administrator' : `${roleLabel} · ${courseCount} ${courseCount === 1 ? 'course' : 'courses'}`}
               </div>
             </div>
           </NavLink>
@@ -188,8 +206,8 @@ export default function Layout() {
             >
               <item.icon size={16} />
               {item.label}
-              {item.to === '/notifications' && unread > 0 && (
-                <span className="rounded-full bg-indigo-600 px-1.5 font-mono text-[10px] text-white">{unread}</span>
+              {badgeFor(item) > 0 && (
+                <span className="rounded-full bg-indigo-600 px-1.5 font-mono text-[10px] text-white">{badgeFor(item)}</span>
               )}
             </NavLink>
           ))}

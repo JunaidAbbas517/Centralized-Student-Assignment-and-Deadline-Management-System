@@ -8,7 +8,9 @@ create table public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   full_name text not null default '',
   email text not null default '',
-  role text not null default 'student' check (role in ('student', 'instructor')),
+  role text not null default 'student' check (role in ('student', 'instructor', 'admin')),
+  -- Instructors who sign up start 'pending' until an admin approves them.
+  status text not null default 'active' check (status in ('active', 'pending', 'rejected')),
   created_at timestamptz not null default now()
 );
 
@@ -83,15 +85,26 @@ create index on public.notifications (deadline_change_id);
 -- At most one reminder per student per assignment.
 create unique index notifications_one_reminder on public.notifications (recipient_id, assignment_id) where type = 'reminder';
 
+create index on public.profiles (role, status);
+
 -- ---------- Profile creation on sign-up ----------
--- Role is ALWAYS 'student' here. Instructors are promoted by the maintainer:
---   update public.profiles set role = 'instructor' where email = 'teacher@university.edu';
+-- Sign-up may REQUEST the instructor role; it is created as 'pending' and does nothing
+-- until an admin approves it. 'admin' can never be requested. The first admin is set once:
+--   update public.profiles set role = 'admin', status = 'active' where email = 'admin@example.com';
 
 create or replace function public.handle_new_user()
 returns trigger language plpgsql security definer set search_path = '' as $$
+declare
+  v_instructor boolean := coalesce(new.raw_user_meta_data ->> 'requested_role', '') = 'instructor';
 begin
-  insert into public.profiles (id, full_name, email)
-  values (new.id, coalesce(new.raw_user_meta_data ->> 'full_name', ''), coalesce(new.email, ''));
+  insert into public.profiles (id, full_name, email, role, status)
+  values (
+    new.id,
+    coalesce(new.raw_user_meta_data ->> 'full_name', ''),
+    coalesce(new.email, ''),
+    case when v_instructor then 'instructor' else 'student' end,
+    case when v_instructor then 'pending' else 'active' end
+  );
   return new;
 end $$;
 
@@ -101,9 +114,14 @@ create trigger on_auth_user_created
 
 -- ---------- Helper functions (used by RLS) ----------
 
+-- Only an APPROVED instructor counts; a pending or rejected one can manage nothing.
 create or replace function public.is_instructor_of(p_course uuid)
 returns boolean language sql stable security definer set search_path = '' as $$
-  select exists (select 1 from public.courses where id = p_course and instructor_id = (select auth.uid()));
+  select exists (
+    select 1 from public.courses c join public.profiles p on p.id = c.instructor_id
+    where c.id = p_course and c.instructor_id = (select auth.uid())
+      and p.role = 'instructor' and p.status = 'active'
+  );
 $$;
 
 create or replace function public.is_enrolled_in(p_course uuid)
@@ -113,7 +131,12 @@ $$;
 
 create or replace function public.is_instructor()
 returns boolean language sql stable security definer set search_path = '' as $$
-  select exists (select 1 from public.profiles where id = (select auth.uid()) and role = 'instructor');
+  select exists (select 1 from public.profiles where id = (select auth.uid()) and role = 'instructor' and status = 'active');
+$$;
+
+create or replace function public.is_admin()
+returns boolean language sql stable security definer set search_path = '' as $$
+  select exists (select 1 from public.profiles where id = (select auth.uid()) and role = 'admin' and status = 'active');
 $$;
 
 -- ---------- Row-level security ----------
@@ -132,6 +155,7 @@ revoke all on all tables in schema public from anon;
 -- profiles: yourself, the students in your courses (instructors), and your instructors (students)
 create policy profiles_select on public.profiles for select to authenticated using (
   id = (select auth.uid())
+  or public.is_admin()
   or exists (select 1 from public.enrollments e join public.courses c on c.id = e.course_id
              where e.student_id = profiles.id and c.instructor_id = (select auth.uid()))
   or exists (select 1 from public.courses c join public.enrollments e on e.course_id = c.id
@@ -317,6 +341,57 @@ begin
   return v_count;
 end $$;
 
+-- ---------- Admin: verify instructors ----------
+
+create or replace function public.set_instructor_status(p_user uuid, p_status text)
+returns void language plpgsql security definer set search_path = '' as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Only an admin can verify instructors';
+  end if;
+  if p_status not in ('active', 'pending', 'rejected') then
+    raise exception 'Unknown status %', p_status;
+  end if;
+  update public.profiles set status = p_status where id = p_user and role = 'instructor';
+  if not found then
+    raise exception 'That user is not an instructor';
+  end if;
+end $$;
+
+-- ---------- Admin: dashboard figures ----------
+-- One call returns every count the admin dashboard shows, plus a per-course summary.
+
+create or replace function public.admin_stats()
+returns json language plpgsql stable security definer set search_path = '' as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Only an admin can see platform statistics';
+  end if;
+  return json_build_object(
+    'students', (select count(*) from public.profiles where role = 'student'),
+    'instructors', (select count(*) from public.profiles where role = 'instructor' and status = 'active'),
+    'pending', (select count(*) from public.profiles where role = 'instructor' and status = 'pending'),
+    'rejected', (select count(*) from public.profiles where role = 'instructor' and status = 'rejected'),
+    'courses', (select count(*) from public.courses where not archived),
+    'archived_courses', (select count(*) from public.courses where archived),
+    'assignments', (select count(*) from public.assignments),
+    'upcoming', (select count(*) from public.assignments where current_deadline > now()),
+    'enrollments', (select count(*) from public.enrollments),
+    'deadline_changes', (select count(*) from public.deadline_changes),
+    'new_users_7d', (select count(*) from public.profiles where created_at > now() - interval '7 days'),
+    'completed', (select count(*) from public.assignment_progress where status = 'completed'),
+    'course_list', coalesce((
+      select json_agg(row_to_json(t) order by t.students desc, t.name)
+      from (
+        select c.id, c.name, c.course_code, c.archived, p.full_name as instructor,
+          (select count(*) from public.enrollments e where e.course_id = c.id) as students,
+          (select count(*) from public.assignments a where a.course_id = c.id) as assignments
+        from public.courses c join public.profiles p on p.id = c.instructor_id
+      ) t
+    ), '[]'::json)
+  );
+end $$;
+
 -- ---------- Function permissions ----------
 -- Only signed-in users may call the RPCs; trigger functions are not callable directly.
 
@@ -327,3 +402,6 @@ grant execute on function public.generate_my_reminders() to authenticated;
 grant execute on function public.is_instructor_of(uuid) to authenticated;
 grant execute on function public.is_enrolled_in(uuid) to authenticated;
 grant execute on function public.is_instructor() to authenticated;
+grant execute on function public.is_admin() to authenticated;
+grant execute on function public.set_instructor_status(uuid, text) to authenticated;
+grant execute on function public.admin_stats() to authenticated;

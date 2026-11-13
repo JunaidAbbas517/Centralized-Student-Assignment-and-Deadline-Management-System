@@ -15,9 +15,12 @@ export function seed(): Record<string, Row[]> {
   })
   return {
     profiles: [
-      { id: 'u-inst', full_name: 'Dr. Wang Lin', email: 'instructor@demo.edu', role: 'instructor' },
-      { id: 'u-stu', full_name: 'Alex Chen', email: 'student@demo.edu', role: 'student' },
-      { id: 'u-stu2', full_name: 'Chen Mei', email: 'chen@demo.edu', role: 'student' },
+      { id: 'u-admin', full_name: 'Site Admin', email: 'admin@demo.edu', role: 'admin', status: 'active', created_at: dayAt(-40, 10, 0) },
+      { id: 'u-inst', full_name: 'Dr. Wang Lin', email: 'instructor@demo.edu', role: 'instructor', status: 'active', created_at: dayAt(-30, 10, 0) },
+      { id: 'u-inst2', full_name: 'Prof. Sara Malik', email: 'sara@demo.edu', role: 'instructor', status: 'pending', created_at: dayAt(-1, 10, 0) },
+      { id: 'u-inst3', full_name: 'Li Hua', email: 'lihua@demo.edu', role: 'instructor', status: 'pending', created_at: dayAt(-3, 10, 0) },
+      { id: 'u-stu', full_name: 'Alex Chen', email: 'student@demo.edu', role: 'student', status: 'active', created_at: dayAt(-28, 10, 0) },
+      { id: 'u-stu2', full_name: 'Chen Mei', email: 'chen@demo.edu', role: 'student', status: 'active', created_at: dayAt(-5, 10, 0) },
     ],
     courses: [
       { id: 'c1', instructor_id: 'u-inst', name: 'Machine Learning', course_code: 'CS510', enrollment_code: 'ML510ABC', archived: false, created_at: dayAt(-60) },

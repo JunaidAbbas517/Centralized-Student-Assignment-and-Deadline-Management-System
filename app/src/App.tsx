@@ -14,6 +14,9 @@ import Login from './pages/Login'
 import Notifications from './pages/Notifications'
 import Account from './pages/Account'
 import ResetPassword from './pages/ResetPassword'
+import PendingApproval from './pages/PendingApproval'
+import AdminDashboard from './pages/admin/AdminDashboard'
+import AdminUsers from './pages/admin/AdminUsers'
 
 function Splash({ text }: { text: string }) {
   return (
@@ -29,6 +32,20 @@ function Gate() {
   if (!session) return <Login />
   if (recovering) return <ResetPassword />
   if (!profile) return <Splash text="Loading your profile…" />
+  if (profile.role === 'instructor' && profile.status !== 'active') return <PendingApproval />
+  if (profile.role === 'admin') {
+    return (
+      <Routes>
+        <Route element={<Layout />}>
+          <Route index element={<AdminDashboard />} />
+          <Route path="instructors" element={<AdminUsers key="pending" initial="pending" />} />
+          <Route path="users" element={<AdminUsers key="all" initial="all" />} />
+          <Route path="account" element={<Account />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+      </Routes>
+    )
+  }
   return (
     <Routes>
       <Route element={<Layout />}>

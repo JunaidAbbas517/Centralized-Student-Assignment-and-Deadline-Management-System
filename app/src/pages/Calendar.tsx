@@ -21,7 +21,7 @@ const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
 export default function CalendarPage() {
   const { profile } = useAuth()
-  const role = profile?.role ?? 'student'
+  const role = profile?.role === 'instructor' ? 'instructor' : 'student'
   const { assignments, changed, history, progress, people, loading, error, reload } = useAssignments(role)
   const [cursor, setCursor] = useState(() => {
     const n = new Date()

@@ -32,13 +32,21 @@ React + TypeScript + Vite frontend, Supabase (Auth + PostgreSQL + RLS) backend, 
 - Notifications: deadline changes and new assignments notify enrolled students automatically;
   reminders for open work due within 48 hours are created when a student opens the app.
 
-## Creating an instructor
+## Roles: student, instructor, admin
 
-Everyone signs up as a student. Promote an instructor in the SQL editor:
+- **Students** sign up and can use the app straight away.
+- **Instructors** sign up with "I am: Instructor". The account is *pending* until an admin
+  approves it; until then they see a "Waiting for admin approval" screen and cannot create courses.
+- **Admins** see the platform dashboard (students, instructors, courses, assignments, activity)
+  and approve, reject or revoke instructor accounts. Admin can never be chosen at sign-up.
+
+Create the first admin once: sign up normally, then run in the SQL editor:
 
 ```sql
-update public.profiles set role = 'instructor' where email = 'teacher@example.com';
+update public.profiles set role = 'admin', status = 'active' where email = 'admin@example.com';
 ```
+
+The login page has a "Log in as" selector; logging in on the wrong one is refused with a hint.
 
 ## Deploying
 
