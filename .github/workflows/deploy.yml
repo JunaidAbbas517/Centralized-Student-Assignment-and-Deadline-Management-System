@@ -29,6 +29,8 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          # Shows one-click test logins (supabase/seed.sql accounts) on the login page. Remove for a real launch.
+          VITE_SHOW_TEST_ACCOUNTS: 'true'
       - uses: actions/upload-pages-artifact@v3
         with:
           path: app/dist

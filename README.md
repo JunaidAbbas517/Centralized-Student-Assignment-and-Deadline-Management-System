@@ -48,6 +48,20 @@ update public.profiles set role = 'admin', status = 'active' where email = 'admi
 
 The login page has a "Log in as" selector; logging in on the wrong one is refused with a hint.
 
+## Sample data and test accounts
+
+Run [supabase/seed.sql](supabase/seed.sql) once after the schema to load the same sample as demo mode
+(3 courses, 17 assignments, submissions, grades and a moved deadline). Every account uses the password `Test@123`:
+
+| Role | Email |
+|---|---|
+| Admin | `admin@gmail.com` |
+| Instructor | `teacher@gmail.com` (pending: `sara@demo.edu`, `lihua@demo.edu`) |
+| Student | `student@gmail.com`, `chen@demo.edu` |
+
+The deployed build sets `VITE_SHOW_TEST_ACCOUNTS=true`, which adds one-click logins for these accounts
+to the login page. Remove it from `.github/workflows/deploy.yml` before real users join: anyone can use them.
+
 ## Deploying
 
 Push to `main` on GitHub, add repo secrets `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`,

@@ -34,6 +34,15 @@ function RibbonArt() {
 
 type Mode = 'login' | 'signup' | 'forgot'
 
+/** One-click test logins: always in demo mode, and on a real build when VITE_SHOW_TEST_ACCOUNTS=true. */
+const SHOW_TEST_ACCOUNTS = import.meta.env.VITE_SHOW_TEST_ACCOUNTS === 'true'
+const TEST_PASSWORD = isDemo ? 'demo' : 'Test@123'
+const TEST_ACCOUNTS = [
+  ['Student', isDemo ? 'student@demo.edu' : 'student@gmail.com', GraduationCap, 'Alex Chen'],
+  ['Instructor', isDemo ? 'instructor@demo.edu' : 'teacher@gmail.com', Presentation, 'Dr. Wang Lin'],
+  ['Admin', isDemo ? 'admin@demo.edu' : 'admin@gmail.com', ShieldCheck, 'Site Admin'],
+] as const
+
 const COPY: Record<Mode, { title: string; sub: string; cta: string }> = {
   login: { title: 'Welcome back', sub: 'Log in to see your courses and deadlines.', cta: 'Log in' },
   signup: {
@@ -263,34 +272,39 @@ export default function Login() {
             </button>
           </p>
 
-          {isDemo && (
+          {(isDemo || SHOW_TEST_ACCOUNTS) && (
             <div className="mt-10">
               <div className="mb-3 flex items-center gap-3">
                 <span className="h-px flex-1 bg-slate-200" />
-                <span className={label}>Design preview</span>
+                <span className={label}>{isDemo ? 'Design preview' : 'Test accounts'}</span>
                 <span className="h-px flex-1 bg-slate-200" />
               </div>
               <div className="grid grid-cols-3 gap-2.5">
-                {([
-                  ['Student', 'student@demo.edu', GraduationCap, 'Alex Chen'],
-                  ['Instructor', 'instructor@demo.edu', Presentation, 'Dr. Wang Lin'],
-                  ['Admin', 'admin@demo.edu', ShieldCheck, 'Site Admin'],
-                ] as const).map(([demoRole, demoEmail, Icon, who]) => (
+                {TEST_ACCOUNTS.map(([testRole, testEmail, Icon, who]) => (
                   <button
-                    key={demoEmail}
+                    key={testEmail}
                     type="button"
-                    className="tap group rounded-2xl border border-slate-200 bg-white/80 p-3.5 text-left hover:border-indigo-200 hover:bg-white hover:shadow-[0_8px_24px_-14px_rgba(84,67,204,.45)]"
-                    onClick={() => {
-                      expectRole(demoRole.toLowerCase() as Role)
-                      void supabase.auth.signInWithPassword({ email: demoEmail, password: 'demo' })
+                    disabled={busy}
+                    title={testEmail}
+                    className="tap group rounded-2xl border border-slate-200 bg-white/80 p-3.5 text-left hover:border-indigo-200 hover:bg-white hover:shadow-[0_8px_24px_-14px_rgba(84,67,204,.45)] disabled:opacity-60"
+                    onClick={async () => {
+                      const asRole = testRole.toLowerCase() as Role
+                      pickRole(asRole)
+                      setEmail(testEmail)
+                      expectRole(asRole)
+                      setBusy(true)
+                      const { error } = await supabase.auth.signInWithPassword({ email: testEmail, password: TEST_PASSWORD })
+                      setBusy(false)
+                      if (error) setError(friendly(error.message))
                     }}
                   >
                     <Icon size={18} className="text-slate-400 group-hover:text-indigo-600" aria-hidden="true" />
-                    <div className="mt-2 text-sm font-semibold text-slate-900">{demoRole}</div>
+                    <div className="mt-2 text-sm font-semibold text-slate-900">{testRole}</div>
                     <div className="truncate text-xs text-slate-500">{who}</div>
                   </button>
                 ))}
               </div>
+              {!isDemo && <p className="mt-2.5 text-center font-mono text-[11px] text-slate-500">Password for all test accounts: {TEST_PASSWORD}</p>}
             </div>
           )}
         </div>
