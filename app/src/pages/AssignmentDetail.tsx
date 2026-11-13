@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { ArrowLeft, ArrowRight, RefreshCw, Trash2 } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Paperclip, RefreshCw, Trash2 } from 'lucide-react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import DeadlineTimeline from '../components/DeadlineTimeline'
-import { btn, btnGhost, Card, CourseDot, courseTheme, ErrorText, input, label, Pill, Segmented } from '../components/ui'
-import { daysFromToday, formatDay, formatFull, isOverdue, localInputToIso, relativeLabel } from '../lib/dates'
-import { saveProgress } from '../lib/progress'
+import StoredFiles from '../components/StoredFiles'
+import SubmissionPanel from '../components/SubmissionPanel'
+import SubmissionsReview from '../components/SubmissionsReview'
+import { btn, btnGhost, Card, CourseDot, courseTheme, ErrorText, input, label, Pill } from '../components/ui'
+import { daysFromToday, formatDay, formatFull, localInputToIso, relativeLabel } from '../lib/dates'
+import { ASSIGNMENT_BUCKET, describeExtensions } from '../lib/files'
+import { setStarted } from '../lib/progress'
+import { loadAssignmentFiles, loadGrades, loadSubmissions, removeAssignmentFiles } from '../lib/submissions'
 import { supabase } from '../lib/supabase'
-import type { Assignment, DeadlineChange, ProgressStatus } from '../lib/types'
+import type { Assignment, AssignmentFile, DeadlineChange, Grade, Submission } from '../lib/types'
 import { LoadingState } from './Dashboard'
 
 type AssignmentWithCourse = Assignment & { courses: { name: string; course_code: string } | null }
@@ -19,11 +24,35 @@ export default function AssignmentDetail() {
   const [assignment, setAssignment] = useState<AssignmentWithCourse | null>(null)
   const [history, setHistory] = useState<DeadlineChange[]>([])
   const [people, setPeople] = useState<Record<string, string>>({})
-  const [status, setStatus] = useState<ProgressStatus>('pending')
+  const [files, setFiles] = useState<AssignmentFile[]>([])
+  const [submissions, setSubmissions] = useState<Submission[]>([])
+  const [grade, setGrade] = useState<Grade | null>(null)
+  const [started, setStartedState] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const isStudent = profile?.role === 'student'
+
+  const loadMine = useCallback(async () => {
+    if (!id || !isStudent) return
+    const [s, g, p] = await Promise.all([
+      loadSubmissions(id),
+      loadGrades(id),
+      supabase.from('assignment_progress').select('status').eq('assignment_id', id).maybeSingle(),
+    ])
+    setSubmissions(s)
+    setGrade(g[0] ?? null)
+    setStartedState(p.data?.status === 'in_progress')
+  }, [id, isStudent])
+
+  async function toggleStarted(next: boolean) {
+    if (!profile || !id) return
+    const { error } = await setStarted(profile.id, id, next)
+    if (error) return setError(error.message)
+    setStartedState(next)
+  }
 
   const load = useCallback(async () => {
+    if (!id) return
     const a = await supabase.from('assignments').select('*, courses(name, course_code)').eq('id', id).single()
     setAssignment((a.data as AssignmentWithCourse) ?? null)
     const h = await supabase.from('deadline_changes').select('*').eq('assignment_id', id).order('changed_at', { ascending: false })
@@ -32,27 +61,19 @@ export default function AssignmentDetail() {
     const names: Record<string, string> = {}
     for (const x of (p.data ?? []) as { id: string; full_name: string }[]) names[x.id] = x.full_name
     setPeople(names)
-    if (profile?.role === 'student') {
-      const s = await supabase.from('assignment_progress').select('status').eq('assignment_id', id).maybeSingle()
-      setStatus((s.data?.status as ProgressStatus) ?? 'pending')
-    }
+    setFiles(await loadAssignmentFiles(id))
+    await loadMine()
     setLoading(false)
-  }, [id, profile?.role])
+  }, [id, loadMine])
 
   useEffect(() => {
     void load()
   }, [load])
 
-  async function updateStatus(next: ProgressStatus) {
-    if (!profile || !id) return
-    const { error } = await saveProgress(profile.id, id, next)
-    if (error) return setError(error.message)
-    setError(null)
-    setStatus(next)
-  }
-
   async function remove() {
-    if (!assignment || !window.confirm('Delete this assignment? Students will no longer see it.')) return
+    if (!assignment || !window.confirm('Delete this assignment? Students will no longer see it, and all submissions and grades for it are deleted.')) return
+    const fileErr = await removeAssignmentFiles(assignment.id)
+    if (fileErr) return setError(`Could not delete the uploaded files: ${fileErr}`)
     const { error } = await supabase.from('assignments').delete().eq('id', assignment.id)
     if (error) return setError(error.message)
     navigate(`/courses/${assignment.course_id}`)
@@ -65,7 +86,7 @@ export default function AssignmentDetail() {
   const theme = courseTheme(assignment.course_id)
   const latest = history[0]
   const rel = relativeLabel(assignment.current_deadline)
-  const late = status !== 'completed' && isOverdue(assignment.current_deadline)
+  const late = rel.overdue && (isInstructor || submissions.length === 0)
   const shift = latest ? Math.round((new Date(latest.new_deadline).getTime() - new Date(latest.previous_deadline).getTime()) / 86400000) : 0
 
   return (
@@ -85,8 +106,17 @@ export default function AssignmentDetail() {
               </div>
               <h1 className="mt-2 text-[2.2rem] font-semibold leading-tight tracking-[-0.025em]">{assignment.title}</h1>
               <p className="mt-3 max-w-[65ch] whitespace-pre-wrap leading-relaxed text-slate-600">
-                {assignment.description || 'No description yet.'}
+                {assignment.description || 'No instructions yet.'}
               </p>
+
+              {files.length > 0 && (
+                <div className="mt-6">
+                  <div className={`${label} mb-2 flex items-center gap-1.5`}><Paperclip size={12} /> Reference files</div>
+                  <StoredFiles bucket={ASSIGNMENT_BUCKET} files={files} />
+                </div>
+              )}
+
+              <Requirements assignment={assignment} />
 
               <div className="mt-7 grid gap-4 rounded-2xl bg-slate-50 p-5 ring-1 ring-inset ring-slate-200/70 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
                 <div>
@@ -106,22 +136,23 @@ export default function AssignmentDetail() {
 
           {isInstructor ? (
             <>
+              <SubmissionsReview assignment={assignment} />
               <ChangeDeadline assignment={assignment} onDone={load} />
               <button onClick={remove} className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-rose-700">
                 <Trash2 size={14} /> Delete assignment
               </button>
             </>
-          ) : (
-            <Card className="rise" style={{ ['--i' as string]: 2 }}>
-              <h2 className="text-lg font-semibold">Your progress</h2>
-              <p className="mb-4 mt-1 text-sm text-slate-500">Only you can see this. Your instructor and classmates cannot.</p>
-              <Segmented
-                value={status}
-                onChange={(s) => void updateStatus(s)}
-                options={[{ value: 'pending', label: 'Pending' }, { value: 'in_progress', label: 'In progress' }, { value: 'completed', label: 'Completed' }]}
-              />
-            </Card>
-          )}
+          ) : isStudent && profile ? (
+            <SubmissionPanel
+              assignment={assignment}
+              studentId={profile.id}
+              submissions={submissions}
+              grade={grade}
+              started={started}
+              onToggleStarted={(s) => void toggleStarted(s)}
+              onSubmitted={() => void loadMine()}
+            />
+          ) : null}
         </div>
 
         <Card className="rise self-start" style={{ ['--i' as string]: 3 }}>
@@ -130,6 +161,33 @@ export default function AssignmentDetail() {
         </Card>
       </div>
     </div>
+  )
+}
+
+const SUBMIT_AS = { file: 'Files', link: 'A link', file_and_link: 'Files and a link' } as const
+
+function Requirements({ assignment }: { assignment: Assignment }) {
+  const items: [string, string][] = [
+    ['Submit', SUBMIT_AS[assignment.submission_type]],
+    ...(assignment.submission_type !== 'link'
+      ? ([
+          ['Accepted', describeExtensions(assignment.allowed_extensions)],
+          ['Limits', `${assignment.max_files} ${assignment.max_files === 1 ? 'file' : 'files'}, up to ${assignment.max_file_mb} MB each`],
+        ] as [string, string][])
+      : []),
+    ['Summary', assignment.summary_required ? 'Required' : 'Optional'],
+    ['Late work', assignment.allow_late ? 'Accepted, marked late' : 'Not accepted'],
+    ['Marks', `Out of ${assignment.total_marks}`],
+  ]
+  return (
+    <dl className="mt-6 grid gap-x-6 gap-y-3 rounded-2xl p-5 ring-1 ring-inset ring-slate-200/70 sm:grid-cols-2">
+      {items.map(([k, v]) => (
+        <div key={k} className="min-w-0">
+          <dt className={label}>{k}</dt>
+          <dd className="mt-0.5 text-sm font-medium text-slate-800">{v}</dd>
+        </div>
+      ))}
+    </dl>
   )
 }
 

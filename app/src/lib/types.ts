@@ -20,6 +20,8 @@ export interface Course {
   archived: boolean
 }
 
+export type SubmissionType = 'file' | 'link' | 'file_and_link'
+
 export interface Assignment {
   id: string
   course_id: string
@@ -27,6 +29,55 @@ export interface Assignment {
   description: string
   current_deadline: string
   created_at: string
+  total_marks: number
+  submission_type: SubmissionType
+  /** Lower-case extensions without the dot. Empty means any file type. */
+  allowed_extensions: string[]
+  max_file_mb: number
+  max_files: number
+  summary_required: boolean
+  allow_late: boolean
+}
+
+export interface AssignmentFile {
+  id: string
+  assignment_id: string
+  path: string
+  name: string
+  size: number
+  uploaded_at: string
+}
+
+export interface SubmissionFile {
+  id: string
+  submission_id: string
+  path: string
+  name: string
+  size: number
+}
+
+export interface Submission {
+  id: string
+  assignment_id: string
+  student_id: string
+  attempt: number
+  summary: string
+  link: string | null
+  is_late: boolean
+  submitted_at: string
+  submission_files: SubmissionFile[]
+}
+
+export interface Grade {
+  id: string
+  assignment_id: string
+  student_id: string
+  submission_id: string | null
+  marks: number
+  feedback: string
+  graded_by: string
+  graded_at: string
+  returned_at: string | null
 }
 
 export interface DeadlineChange {
@@ -54,10 +105,4 @@ export interface Notification {
   message: string
   is_read: boolean
   created_at: string
-}
-
-export const STATUS_LABEL: Record<ProgressStatus, string> = {
-  pending: 'Pending',
-  in_progress: 'In progress',
-  completed: 'Completed',
 }

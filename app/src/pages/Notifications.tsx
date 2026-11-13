@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { BellRing, CalendarPlus, CheckCheck, RefreshCw } from 'lucide-react'
+import { Award, BellRing, CalendarPlus, CheckCheck, FileCheck, RefreshCw } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { btnGhost, Card, courseTheme, ErrorText, PageHeader } from '../components/ui'
 import { whenLabel } from '../lib/dates'
@@ -10,7 +10,9 @@ import { LoadingState } from './Dashboard'
 
 type Row = Notification & { assignments: { title: string; course_id: string; courses: { name: string } | null } | null }
 
-const ICONS = { deadline_changed: RefreshCw, reminder: BellRing, new_assignment: CalendarPlus } as const
+const ICONS = {
+  deadline_changed: RefreshCw, reminder: BellRing, new_assignment: CalendarPlus, submission_received: FileCheck, graded: Award,
+} as const
 
 export default function Notifications() {
   const [items, setItems] = useState<Row[]>([])
@@ -54,7 +56,7 @@ export default function Notifications() {
       {loading ? (
         <LoadingState />
       ) : items.length === 0 ? (
-        <Card className="text-center text-slate-500">No notifications yet. Deadline changes show up here.</Card>
+        <Card className="text-center text-slate-500">No notifications yet. New assignments, deadline changes, submissions and grades show up here.</Card>
       ) : (
         <Card className="rise !p-0 overflow-hidden" style={{ ['--i' as string]: 1 }}>
           <ul>

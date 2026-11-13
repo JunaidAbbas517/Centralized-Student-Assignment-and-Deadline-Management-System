@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { ChevronDown } from 'lucide-react'
-import type { ProgressStatus } from '../lib/types'
-import { STATUS_LABEL } from '../lib/types'
+import { type CSSProperties, type ReactNode } from 'react'
+import { Award, CircleCheck } from 'lucide-react'
+import { formatMarks, WORK_LABEL, type WorkInfo, type WorkState } from '../lib/workStatus'
 
 export const btn =
   'tap inline-flex items-center justify-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-[0_1px_0_rgba(255,255,255,.25)_inset,0_6px_16px_-6px_rgba(84,67,204,.55)] hover:bg-indigo-700 disabled:opacity-50'
@@ -77,10 +76,11 @@ export function CourseDot({ courseId, className = '' }: { courseId: string; clas
 
 // ---------- Pills ----------
 
-type Tone = 'overdue' | 'in_progress' | 'pending' | 'completed' | 'changed' | 'neutral'
+type Tone = 'overdue' | 'in_progress' | 'pending' | 'completed' | 'changed' | 'neutral' | 'submitted'
 const TONES: Record<Tone, string> = {
   overdue: 'bg-rose-50 text-rose-700 ring-rose-200',
   in_progress: 'bg-indigo-50 text-indigo-700 ring-indigo-200',
+  submitted: 'bg-sky-50 text-sky-700 ring-sky-200',
   pending: 'bg-white text-slate-600 ring-slate-200',
   completed: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
   changed: 'bg-orange-50 text-orange-700 ring-orange-200',
@@ -95,60 +95,24 @@ export function Pill({ tone, children }: { tone: Tone; children: ReactNode }) {
   )
 }
 
-export function StatusBadge({ status }: { status: ProgressStatus }) {
-  return <Pill tone={status}>{STATUS_LABEL[status]}</Pill>
+const WORK_TONE: Record<WorkState, Tone> = {
+  not_started: 'pending',
+  in_progress: 'in_progress',
+  submitted: 'submitted',
+  submitted_late: 'changed',
+  graded: 'completed',
+  missing: 'overdue',
+  closed: 'neutral',
 }
 
-// ---------- Status menu ----------
-
-export function StatusMenu({ value, onChange }: { value: ProgressStatus; onChange: (s: ProgressStatus) => void }) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const close = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false)
-    }
-    const esc = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
-    document.addEventListener('mousedown', close)
-    document.addEventListener('keydown', esc)
-    return () => {
-      document.removeEventListener('mousedown', close)
-      document.removeEventListener('keydown', esc)
-    }
-  }, [open])
-
+/** A student's real status on an assignment, with marks once graded. */
+export function WorkPill({ work }: { work: WorkInfo }) {
+  const handedIn = work.state === 'submitted' || work.state === 'submitted_late'
   return (
-    <div ref={ref} className="relative inline-block">
-      <button
-        className="tap inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 ring-1 ring-inset ring-transparent hover:bg-white hover:text-slate-900 hover:ring-slate-200 aria-expanded:bg-white aria-expanded:text-slate-900 aria-expanded:ring-slate-200"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-      >
-        Update status <ChevronDown size={14} aria-hidden="true" />
-      </button>
-      {open && (
-        <ul role="menu" className="fade absolute right-0 z-20 mt-1.5 w-44 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-[0_16px_40px_-12px_rgba(25,25,39,.25)]">
-          {(Object.keys(STATUS_LABEL) as ProgressStatus[]).map((s) => (
-            <li key={s} role="none">
-              <button
-                role="menuitem"
-                className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm hover:bg-slate-50 ${s === value ? 'font-semibold text-indigo-700' : 'text-slate-700'}`}
-                onClick={() => {
-                  setOpen(false)
-                  onChange(s)
-                }}
-              >
-                {STATUS_LABEL[s]}
-                {s === value && <span aria-hidden="true">✓</span>}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+    <Pill tone={WORK_TONE[work.state]}>
+      {work.state === 'graded' ? <Award size={11} aria-hidden="true" /> : handedIn ? <CircleCheck size={11} aria-hidden="true" /> : null}
+      {work.state === 'graded' && work.marks !== null ? `${formatMarks(work.marks)}/${work.total}` : WORK_LABEL[work.state]}
+    </Pill>
   )
 }
 
@@ -166,6 +130,7 @@ export function Segmented<T extends string>({
       {options.map((o) => (
         <button
           key={o.value}
+          type="button"
           role="tab"
           aria-selected={o.value === value}
           onClick={() => onChange(o.value)}

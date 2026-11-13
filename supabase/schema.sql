@@ -208,14 +208,19 @@ revoke insert, update, delete on public.deadline_changes from authenticated;
 
 -- assignment_progress: strictly your own rows, only for assignments in courses you are enrolled in
 create policy progress_select on public.assignment_progress for select to authenticated using (student_id = (select auth.uid()));
+-- Students may only mark work as pending or in progress. 'completed' means submitted and is
+-- set only by submit_assignment(); once set, the student cannot change it back.
+-- (Migration "progress_only_by_submission".)
 create policy progress_insert on public.assignment_progress for insert to authenticated with check (
   student_id = (select auth.uid())
+  and status in ('pending', 'in_progress')
   and exists (select 1 from public.assignments a where a.id = assignment_id and public.is_enrolled_in(a.course_id))
 );
 create policy progress_update on public.assignment_progress for update to authenticated
-  using (student_id = (select auth.uid()))
+  using (student_id = (select auth.uid()) and status <> 'completed')
   with check (
     student_id = (select auth.uid())
+    and status in ('pending', 'in_progress')
     and exists (select 1 from public.assignments a where a.id = assignment_id and public.is_enrolled_in(a.course_id))
   );
 revoke delete on public.assignment_progress from authenticated;
@@ -396,6 +401,9 @@ end $$;
 -- Only signed-in users may call the RPCs; trigger functions are not callable directly.
 
 revoke execute on all functions in schema public from public, anon;
+-- Supabase grants EXECUTE to authenticated on new functions by default.
+revoke execute on function public.handle_new_user() from authenticated;
+revoke execute on function public.notify_new_assignment() from authenticated;
 grant execute on function public.enroll_by_code(text) to authenticated;
 grant execute on function public.change_deadline(uuid, timestamptz, timestamptz, text) to authenticated;
 grant execute on function public.generate_my_reminders() to authenticated;
@@ -405,3 +413,353 @@ grant execute on function public.is_instructor() to authenticated;
 grant execute on function public.is_admin() to authenticated;
 grant execute on function public.set_instructor_status(uuid, text) to authenticated;
 grant execute on function public.admin_stats() to authenticated;
+
+-- ========== Submissions and grading (migration "submissions_and_grading") ==========
+
+-- ---------- Submission rules on each assignment ----------
+
+alter table public.assignments
+  add column total_marks integer not null default 100 check (total_marks between 1 and 1000),
+  add column submission_type text not null default 'file'
+    check (submission_type in ('file', 'link', 'file_and_link')),
+  -- Lower-case file extensions a student may upload. Empty means any type.
+  add column allowed_extensions text[] not null default '{}',
+  add column max_file_mb integer not null default 20 check (max_file_mb between 1 and 50),
+  add column max_files integer not null default 5 check (max_files between 1 and 20),
+  add column summary_required boolean not null default false,
+  add column allow_late boolean not null default true;
+
+grant update (total_marks, submission_type, allowed_extensions, max_file_mb, max_files, summary_required, allow_late)
+  on public.assignments to authenticated;
+
+alter table public.notifications drop constraint notifications_type_check;
+alter table public.notifications add constraint notifications_type_check
+  check (type in ('deadline_changed', 'reminder', 'new_assignment', 'submission_received', 'graded'));
+
+-- ---------- Tables ----------
+
+-- Reference material the instructor attaches (brief, starter code, images).
+create table public.assignment_files (
+  id uuid primary key default gen_random_uuid(),
+  assignment_id uuid not null references public.assignments(id) on delete cascade,
+  path text not null unique,
+  name text not null,
+  size bigint not null,
+  uploaded_at timestamptz not null default now()
+);
+
+-- One row per attempt; earlier attempts are kept as versions. Written only by submit_assignment().
+create table public.submissions (
+  id uuid primary key default gen_random_uuid(),
+  assignment_id uuid not null references public.assignments(id) on delete cascade,
+  student_id uuid not null references public.profiles(id) on delete cascade,
+  attempt integer not null check (attempt > 0),
+  summary text not null default '',
+  link text,
+  is_late boolean not null,
+  submitted_at timestamptz not null default now(),
+  unique (assignment_id, student_id, attempt)
+);
+
+create table public.submission_files (
+  id uuid primary key default gen_random_uuid(),
+  submission_id uuid not null references public.submissions(id) on delete cascade,
+  path text not null unique,
+  name text not null,
+  size bigint not null
+);
+
+-- One grade per student per assignment. Students only see it once it is returned.
+create table public.grades (
+  id uuid primary key default gen_random_uuid(),
+  assignment_id uuid not null references public.assignments(id) on delete cascade,
+  student_id uuid not null references public.profiles(id) on delete cascade,
+  submission_id uuid references public.submissions(id) on delete set null,
+  marks numeric(7, 2) not null check (marks >= 0),
+  feedback text not null default '',
+  graded_by uuid not null references public.profiles(id),
+  graded_at timestamptz not null default now(),
+  returned_at timestamptz,
+  unique (assignment_id, student_id)
+);
+
+create index on public.assignment_files (assignment_id);
+create index on public.submissions (student_id);
+create index on public.submission_files (submission_id);
+create index on public.grades (student_id);
+create index on public.grades (submission_id);
+create index on public.grades (graded_by);
+
+-- ---------- Row-level security ----------
+
+alter table public.assignment_files enable row level security;
+alter table public.submissions enable row level security;
+alter table public.submission_files enable row level security;
+alter table public.grades enable row level security;
+revoke all on public.assignment_files, public.submissions, public.submission_files, public.grades from anon;
+
+create policy assignment_files_select on public.assignment_files for select to authenticated using (
+  exists (select 1 from public.assignments a where a.id = assignment_id
+          and (public.is_instructor_of(a.course_id) or public.is_enrolled_in(a.course_id) or public.is_admin()))
+);
+create policy assignment_files_insert on public.assignment_files for insert to authenticated with check (
+  path like assignment_id::text || '/%'
+  and exists (select 1 from public.assignments a where a.id = assignment_id and public.is_instructor_of(a.course_id))
+);
+create policy assignment_files_delete on public.assignment_files for delete to authenticated using (
+  exists (select 1 from public.assignments a where a.id = assignment_id and public.is_instructor_of(a.course_id))
+);
+revoke update on public.assignment_files from authenticated;
+
+create policy submissions_select on public.submissions for select to authenticated using (
+  student_id = (select auth.uid())
+  or public.is_admin()
+  or exists (select 1 from public.assignments a where a.id = assignment_id and public.is_instructor_of(a.course_id))
+);
+revoke insert, update, delete on public.submissions from authenticated;
+
+-- Visible exactly when the parent submission is visible (its own RLS applies in the subquery).
+create policy submission_files_select on public.submission_files for select to authenticated using (
+  exists (select 1 from public.submissions s where s.id = submission_id)
+);
+revoke insert, update, delete on public.submission_files from authenticated;
+
+create policy grades_select on public.grades for select to authenticated using (
+  (student_id = (select auth.uid()) and returned_at is not null)
+  or public.is_admin()
+  or exists (select 1 from public.assignments a where a.id = assignment_id and public.is_instructor_of(a.course_id))
+);
+revoke insert, update, delete on public.grades from authenticated;
+
+-- ---------- File storage ----------
+-- assignment-files/<assignment id>/<file>
+-- submissions/<assignment id>/<student id>/<upload id>/<file>
+
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('assignment-files', 'assignment-files', false, 52428800),
+       ('submissions', 'submissions', false, 52428800)
+on conflict (id) do nothing;
+
+create policy "assignment files: course members read" on storage.objects for select to authenticated using (
+  bucket_id = 'assignment-files'
+  and exists (select 1 from public.assignments a where a.id::text = (storage.foldername(objects.name))[1]
+              and (public.is_instructor_of(a.course_id) or public.is_enrolled_in(a.course_id) or public.is_admin()))
+);
+create policy "assignment files: instructor uploads" on storage.objects for insert to authenticated with check (
+  bucket_id = 'assignment-files'
+  and exists (select 1 from public.assignments a where a.id::text = (storage.foldername(objects.name))[1]
+              and public.is_instructor_of(a.course_id))
+);
+create policy "assignment files: instructor removes" on storage.objects for delete to authenticated using (
+  bucket_id = 'assignment-files'
+  and exists (select 1 from public.assignments a where a.id::text = (storage.foldername(objects.name))[1]
+              and public.is_instructor_of(a.course_id))
+);
+
+create policy "submissions: owner, instructor and admin read" on storage.objects for select to authenticated using (
+  bucket_id = 'submissions'
+  and (
+    (storage.foldername(objects.name))[2] = (select auth.uid())::text
+    or public.is_admin()
+    or exists (select 1 from public.assignments a where a.id::text = (storage.foldername(objects.name))[1]
+               and public.is_instructor_of(a.course_id))
+  )
+);
+-- Students can never update or delete an upload, so earlier versions cannot be altered.
+create policy "submissions: enrolled student uploads own" on storage.objects for insert to authenticated with check (
+  bucket_id = 'submissions'
+  and (storage.foldername(objects.name))[2] = (select auth.uid())::text
+  and exists (select 1 from public.assignments a where a.id::text = (storage.foldername(objects.name))[1]
+              and public.is_enrolled_in(a.course_id))
+);
+
+-- Migration "storage_cleanup_policies". Supabase forbids deleting storage rows with SQL, so files
+-- must be removed through the Storage API before their assignment is deleted.
+create policy "submissions: instructor removes" on storage.objects for delete to authenticated using (
+  bucket_id = 'submissions'
+  and exists (select 1 from public.assignments a where a.id::text = (storage.foldername(objects.name))[1]
+              and public.is_instructor_of(a.course_id))
+);
+create policy "files: admin removes" on storage.objects for delete to authenticated using (
+  bucket_id in ('assignment-files', 'submissions') and public.is_admin()
+);
+create policy "files: admin lists" on storage.objects for select to authenticated using (
+  bucket_id in ('assignment-files', 'submissions') and public.is_admin()
+);
+
+-- ---------- RPC: submit an assignment ----------
+-- Checks every rule on the server: enrolment, late policy, resubmission window,
+-- required summary or link, file count, size (read from storage) and type.
+-- p_files: [{"path": "...", "name": "..."}] for files already uploaded to the submissions bucket.
+
+create or replace function public.submit_assignment(
+  p_assignment uuid,
+  p_summary text,
+  p_link text,
+  p_files jsonb default '[]'
+) returns uuid language plpgsql security definer set search_path = '' as $$
+declare
+  v_me uuid := (select auth.uid());
+  v_a public.assignments%rowtype;
+  v_late boolean;
+  v_attempt integer;
+  v_sub uuid;
+  v_file jsonb;
+  v_path text;
+  v_name text;
+  v_ext text;
+  v_size bigint;
+  v_files jsonb := coalesce(p_files, '[]'::jsonb);
+  v_count integer;
+  v_link text := nullif(trim(coalesce(p_link, '')), '');
+  v_summary text := trim(coalesce(p_summary, ''));
+begin
+  select * into v_a from public.assignments where id = p_assignment;
+  if v_a.id is null then
+    raise exception 'Assignment not found';
+  end if;
+  if not public.is_enrolled_in(v_a.course_id) then
+    raise exception 'You are not enrolled in this course';
+  end if;
+  if exists (select 1 from public.courses where id = v_a.course_id and archived) then
+    raise exception 'This course is archived';
+  end if;
+  if exists (select 1 from public.grades where assignment_id = v_a.id and student_id = v_me and returned_at is not null) then
+    raise exception 'This assignment has already been graded';
+  end if;
+
+  v_late := now() > v_a.current_deadline;
+  if v_late then
+    if not v_a.allow_late then
+      raise exception 'The deadline has passed and this assignment does not accept late work';
+    end if;
+    if exists (select 1 from public.submissions where assignment_id = v_a.id and student_id = v_me) then
+      raise exception 'The deadline has passed, so you can no longer resubmit';
+    end if;
+  end if;
+
+  if jsonb_typeof(v_files) <> 'array' then
+    raise exception 'Invalid file list';
+  end if;
+  v_count := jsonb_array_length(v_files);
+
+  if v_a.summary_required and v_summary = '' then
+    raise exception 'A summary is required for this assignment';
+  end if;
+  if v_a.submission_type in ('link', 'file_and_link') and v_link is null then
+    raise exception 'A link is required for this assignment';
+  end if;
+  if v_link is not null and v_link !~* '^https?://[^\s]+$' then
+    raise exception 'The link must start with http:// or https://';
+  end if;
+  if v_a.submission_type = 'link' and v_count > 0 then
+    raise exception 'This assignment takes a link, not files';
+  end if;
+  if v_a.submission_type in ('file', 'file_and_link') and v_count = 0 then
+    raise exception 'Attach at least one file';
+  end if;
+  if v_count > v_a.max_files then
+    raise exception 'You can attach at most % files', v_a.max_files;
+  end if;
+
+  select coalesce(max(attempt), 0) + 1 into v_attempt
+  from public.submissions where assignment_id = v_a.id and student_id = v_me;
+
+  insert into public.submissions (assignment_id, student_id, attempt, summary, link, is_late)
+  values (v_a.id, v_me, v_attempt, v_summary, v_link, v_late)
+  returning id into v_sub;
+
+  for v_file in select value from jsonb_array_elements(v_files) loop
+    v_path := v_file ->> 'path';
+    v_name := coalesce(nullif(trim(v_file ->> 'name'), ''), regexp_replace(coalesce(v_path, ''), '^.*/', ''));
+    if v_path is null or v_path not like v_a.id::text || '/' || v_me::text || '/%' then
+      raise exception 'Invalid file reference';
+    end if;
+    select (o.metadata ->> 'size')::bigint into v_size
+    from storage.objects o where o.bucket_id = 'submissions' and o.name = v_path;
+    if v_size is null then
+      raise exception '% was not uploaded. Try again.', v_name;
+    end if;
+    if v_size > v_a.max_file_mb::bigint * 1048576 then
+      raise exception '% is larger than % MB', v_name, v_a.max_file_mb;
+    end if;
+    v_ext := lower(substring(v_path from '\.([A-Za-z0-9]+)$'));
+    if cardinality(v_a.allowed_extensions) > 0 and (v_ext is null or not v_ext = any (v_a.allowed_extensions)) then
+      raise exception '% is not an accepted file type', v_name;
+    end if;
+    insert into public.submission_files (submission_id, path, name, size) values (v_sub, v_path, v_name, v_size);
+  end loop;
+
+  insert into public.assignment_progress (student_id, assignment_id, status, updated_at)
+  values (v_me, v_a.id, 'completed', now())
+  on conflict (student_id, assignment_id) do update set status = 'completed', updated_at = now();
+
+  insert into public.notifications (recipient_id, assignment_id, type, message)
+  values (
+    v_me, v_a.id, 'submission_received',
+    case when v_late then 'Submitted late: ' else 'Submitted: ' end || v_a.title
+      || case when v_attempt > 1 then ' (attempt ' || v_attempt || ')' else '' end
+  );
+
+  return v_sub;
+end $$;
+
+-- ---------- RPC: grade a student's work ----------
+-- Saves marks and feedback for the latest attempt. p_return = true releases it to the student
+-- and notifies them; saving without returning keeps it private to the instructor.
+
+create or replace function public.grade_submission(
+  p_assignment uuid,
+  p_student uuid,
+  p_marks numeric,
+  p_feedback text,
+  p_return boolean
+) returns void language plpgsql security definer set search_path = '' as $$
+declare
+  v_a public.assignments%rowtype;
+  v_sub uuid;
+  v_prev timestamptz;
+begin
+  select * into v_a from public.assignments where id = p_assignment;
+  if v_a.id is null then
+    raise exception 'Assignment not found';
+  end if;
+  if not public.is_instructor_of(v_a.course_id) then
+    raise exception 'Only the course instructor can grade this assignment';
+  end if;
+  if not exists (select 1 from public.enrollments where course_id = v_a.course_id and student_id = p_student) then
+    raise exception 'That student is not enrolled in this course';
+  end if;
+  if p_marks is null or p_marks < 0 or p_marks > v_a.total_marks then
+    raise exception 'Marks must be between 0 and %', v_a.total_marks;
+  end if;
+
+  select id into v_sub from public.submissions
+  where assignment_id = v_a.id and student_id = p_student order by attempt desc limit 1;
+  select returned_at into v_prev from public.grades where assignment_id = v_a.id and student_id = p_student;
+
+  insert into public.grades as g (assignment_id, student_id, submission_id, marks, feedback, graded_by, returned_at)
+  values (v_a.id, p_student, v_sub, p_marks, trim(coalesce(p_feedback, '')), (select auth.uid()),
+          case when p_return then now() end)
+  on conflict (assignment_id, student_id) do update set
+    submission_id = excluded.submission_id,
+    marks = excluded.marks,
+    feedback = excluded.feedback,
+    graded_by = excluded.graded_by,
+    graded_at = now(),
+    returned_at = case when p_return then now() else g.returned_at end;
+
+  if p_return then
+    insert into public.notifications (recipient_id, assignment_id, type, message)
+    values (
+      p_student, v_a.id, 'graded',
+      case when v_prev is null then 'Graded: ' else 'Grade updated: ' end || v_a.title
+        || ' (' || trim(to_char(p_marks, 'FM999990.##'), '.') || '/' || v_a.total_marks || ')'
+    );
+  end if;
+end $$;
+
+revoke execute on function public.submit_assignment(uuid, text, text, jsonb) from public, anon;
+revoke execute on function public.grade_submission(uuid, uuid, numeric, text, boolean) from public, anon;
+grant execute on function public.submit_assignment(uuid, text, text, jsonb) to authenticated;
+grant execute on function public.grade_submission(uuid, uuid, numeric, text, boolean) to authenticated;

@@ -2,8 +2,9 @@ import { useId, useMemo } from 'react'
 import { Check } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { dayKey, formatShort, startOfDay } from '../lib/dates'
-import type { DeadlineChange, ProgressStatus } from '../lib/types'
+import type { DeadlineChange } from '../lib/types'
 import type { AssignmentWithCourse } from '../lib/useAssignments'
+import { isHandedIn, type WorkInfo } from '../lib/workStatus'
 import { courseTheme } from './ui'
 
 /**
@@ -14,7 +15,8 @@ import { courseTheme } from './ui'
 interface Props {
   assignments: AssignmentWithCourse[]
   changed: Record<string, DeadlineChange>
-  progress?: Record<string, ProgressStatus>
+  /** Student only: handed-in work is drawn muted with a tick. */
+  work?: Record<string, WorkInfo>
   ahead?: number
   behind?: number
 }
@@ -25,7 +27,7 @@ const LANES = [86, 48, 10] // chip top (px) for each lane, nearest the track fir
 const CHIP_H = 30
 const CHIP_W = 18 // estimated chip width, in % of the ribbon
 
-export default function DeadlineRibbon({ assignments, changed, progress = {}, ahead = 14, behind = 3 }: Props) {
+export default function DeadlineRibbon({ assignments, changed, work = {}, ahead = 14, behind = 3 }: Props) {
   const uid = useId().replace(/:/g, '')
   const now = new Date()
   const start = startOfDay(now).getTime() - behind * DAY
@@ -169,8 +171,8 @@ export default function DeadlineRibbon({ assignments, changed, progress = {}, ah
           <ol className="contents">
             {pins.map(({ a, px, lane, right }, i) => {
               const t = courseTheme(a.course_id)
-              const done = progress[a.id] === 'completed'
-              const late = !done && new Date(a.current_deadline).getTime() < now.getTime()
+              const done = isHandedIn(work[a.id]?.state)
+              const late = work[a.id]?.state === 'missing' || work[a.id]?.state === 'closed'
               const short = a.title.split(':')[0]
               const top = lane >= 0 ? LANES[lane] : null
               return (
@@ -189,7 +191,7 @@ export default function DeadlineRibbon({ assignments, changed, progress = {}, ah
                   />
                   <Link
                     to={`/assignments/${a.id}`}
-                    aria-label={`${a.title}, ${a.courses?.name}, due ${formatShort(a.current_deadline)}${done ? ', completed' : late ? ', overdue' : ''}`}
+                    aria-label={`${a.title}, ${a.courses?.name}, due ${formatShort(a.current_deadline)}${done ? ', submitted' : late ? ', missing' : ''}`}
                     title={a.title}
                     className={`absolute flex max-w-[11rem] items-center gap-1.5 rounded-lg px-2 text-xs font-semibold shadow-[0_1px_2px_rgba(25,25,39,.06)] ring-1 ring-inset hover:brightness-[0.97] ${
                       top === null ? 'h-5 w-5 -translate-x-1/2 -translate-y-1/2 !px-0 opacity-0 focus:opacity-100' : ''

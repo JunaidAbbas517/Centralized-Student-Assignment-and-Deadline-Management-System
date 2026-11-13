@@ -2,28 +2,29 @@ import { useState } from 'react'
 import { useAuth } from '../auth/AuthContext'
 import AssignmentTable from '../components/AssignmentTable'
 import { Card, ErrorText, input, PageHeader, Segmented } from '../components/ui'
-import { isOverdue } from '../lib/dates'
-import { saveProgress } from '../lib/progress'
+import { setStarted } from '../lib/progress'
 import { useAssignments } from '../lib/useAssignments'
+import { isOpen } from '../lib/workStatus'
 
-type Tab = 'all' | 'open' | 'overdue' | 'completed'
+type Tab = 'all' | 'todo' | 'missing' | 'submitted' | 'graded'
 
 export default function Assignments() {
   const { profile } = useAuth()
   const role = profile?.role === 'instructor' ? 'instructor' : 'student'
-  const { assignments, progress, changed, loading, error, reload } = useAssignments(role)
+  const { assignments, work, classWork, changed, loading, error, reload } = useAssignments(role)
   const [tab, setTab] = useState<Tab>('all')
   const [query, setQuery] = useState('')
 
   if (loading) return <p>Loading…</p>
-  const done = (id: string) => progress[id] === 'completed'
 
   const rows = assignments
     .filter((a) => {
+      const s = work[a.id]?.state
       if (role === 'instructor' || tab === 'all') return true
-      if (tab === 'completed') return done(a.id)
-      if (tab === 'overdue') return !done(a.id) && isOverdue(a.current_deadline)
-      return !done(a.id)
+      if (tab === 'todo') return isOpen(s) && s !== 'missing'
+      if (tab === 'missing') return s === 'missing' || s === 'closed'
+      if (tab === 'submitted') return s === 'submitted' || s === 'submitted_late'
+      return s === 'graded'
     })
     .filter((a) => `${a.title} ${a.courses?.name}`.toLowerCase().includes(query.toLowerCase()))
 
@@ -36,8 +37,8 @@ export default function Assignments() {
             value={tab}
             onChange={setTab}
             options={[
-              { value: 'all', label: 'All' }, { value: 'open', label: 'Open' },
-              { value: 'overdue', label: 'Overdue' }, { value: 'completed', label: 'Completed' },
+              { value: 'all', label: 'All' }, { value: 'todo', label: 'To do' }, { value: 'missing', label: 'Missing' },
+              { value: 'submitted', label: 'Submitted' }, { value: 'graded', label: 'Graded' },
             ]}
           />
         )}
@@ -46,13 +47,14 @@ export default function Assignments() {
       <Card className="!p-0">
         <AssignmentTable
           rows={rows}
-          progress={progress}
+          work={work}
+          classWork={classWork}
           changed={changed}
           role={role}
           empty="No assignments match."
-          onStatus={async (a, s) => {
+          onStart={async (a) => {
             if (!profile) return
-            await saveProgress(profile.id, a.id, s)
+            await setStarted(profile.id, a.id, true)
             await reload()
           }}
         />

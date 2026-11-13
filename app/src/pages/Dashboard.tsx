@@ -10,10 +10,11 @@ import {
 import {
   daysFromToday, formatDay, formatLongDate, formatShort, greeting, isOverdue, relativeLabel, whenLabel, whenPhrase,
 } from '../lib/dates'
-import { notifyNotificationsChanged, saveProgress } from '../lib/progress'
+import { notifyNotificationsChanged, setStarted } from '../lib/progress'
 import { supabase } from '../lib/supabase'
 import type { Course, Notification } from '../lib/types'
 import { useAssignments, type AssignmentWithCourse } from '../lib/useAssignments'
+import { isHandedIn, isOpen } from '../lib/workStatus'
 
 export default function Dashboard() {
   const { profile } = useAuth()
@@ -69,7 +70,7 @@ type NotifRow = Notification & { assignments: { title: string; course_id: string
 function StudentDashboard() {
   const { profile } = useAuth()
   const navigate = useNavigate()
-  const { assignments, progress, changed, people, loading, error, reload } = useAssignments('student')
+  const { assignments, work, changed, people, loading, error, reload } = useAssignments('student')
   const [tab, setTab] = useState<'all' | 'week' | 'overdue'>('all')
   const [query, setQuery] = useState('')
   const [notifs, setNotifs] = useState<NotifRow[]>([])
@@ -87,18 +88,20 @@ function StudentDashboard() {
     void loadNotifs()
   }, [loadNotifs])
 
-  const statusOf = (id: string) => progress[id] ?? 'pending'
-  const open = assignments.filter((a) => statusOf(a.id) !== 'completed')
-  const overdue = open.filter((a) => isOverdue(a.current_deadline))
-  const upcoming = open.filter((a) => !isOverdue(a.current_deadline))
+  const stateOf = (id: string) => work[id]?.state
+  // Open = the student can still act: not started, in progress, or missing with late work accepted.
+  const open = assignments.filter((a) => isOpen(stateOf(a.id)))
+  const overdue = open.filter((a) => stateOf(a.id) === 'missing')
+  const upcoming = open.filter((a) => stateOf(a.id) !== 'missing')
   const thisWeek = upcoming.filter((a) => daysFromToday(a.current_deadline) <= 7)
-  const inProgress = assignments.filter((a) => statusOf(a.id) === 'in_progress')
-  const completed = assignments.filter((a) => statusOf(a.id) === 'completed')
+  const inProgress = assignments.filter((a) => stateOf(a.id) === 'in_progress')
+  const handedIn = assignments.filter((a) => isHandedIn(stateOf(a.id)))
+  const graded = assignments.filter((a) => stateOf(a.id) === 'graded')
 
   const rows = open
     .filter((a) => {
-      if (tab === 'overdue') return isOverdue(a.current_deadline)
-      if (tab === 'week') return !isOverdue(a.current_deadline) && daysFromToday(a.current_deadline) <= 7
+      if (tab === 'overdue') return stateOf(a.id) === 'missing'
+      if (tab === 'week') return stateOf(a.id) !== 'missing' && daysFromToday(a.current_deadline) <= 7
       return true
     })
     .filter((a) => `${a.title} ${a.courses?.name}`.toLowerCase().includes(query.toLowerCase()))
@@ -115,15 +118,23 @@ function StudentDashboard() {
   }
 
   const courses = useMemo(() => {
-    const map = new Map<string, { id: string; name: string; code: string; total: number; done: number }>()
+    const map = new Map<string, CourseSummary & { code: string; earned: number; possible: number }>()
     for (const a of assignments) {
-      const c = map.get(a.course_id) ?? { id: a.course_id, name: a.courses?.name ?? '', code: a.courses?.course_code ?? '', total: 0, done: 0 }
+      const c = map.get(a.course_id) ?? {
+        id: a.course_id, name: a.courses?.name ?? '', code: a.courses?.course_code ?? '', total: 0, done: 0, average: null, earned: 0, possible: 0,
+      }
+      const w = work[a.id]
       c.total++
-      if ((progress[a.id] ?? 'pending') === 'completed') c.done++
+      if (isHandedIn(w?.state)) c.done++
+      if (w?.state === 'graded' && w.marks !== null) {
+        c.earned += w.marks
+        c.possible += w.total
+      }
+      c.average = c.possible ? Math.round((c.earned / c.possible) * 100) : null
       map.set(a.course_id, c)
     }
     return [...map.values()].sort((a, b) => a.code.localeCompare(b.code))
-  }, [assignments, progress])
+  }, [assignments, work])
 
   if (loading) return <LoadingState />
   const next = upcoming[0]
@@ -132,7 +143,7 @@ function StudentDashboard() {
   const summary = [
     thisWeek.length ? `You have ${plural(thisWeek.length, 'deadline')} in the next 7 days.` : 'Nothing is due in the next 7 days.',
     next ? `Next up is ${next.title.split(':')[0]}, ${relativeLabel(next.current_deadline).text}.` : '',
-    overdue.length ? `${plural(overdue.length, 'assignment')} ${overdue.length === 1 ? 'is' : 'are'} past due.` : '',
+    overdue.length ? `${plural(overdue.length, 'assignment')} ${overdue.length === 1 ? 'is' : 'are'} past due but still accept${overdue.length === 1 ? 's' : ''} late work.` : '',
   ].filter(Boolean).join(' ')
 
   return (
@@ -185,8 +196,8 @@ function StudentDashboard() {
           <div className="grid grid-cols-2 gap-y-4 divide-slate-200 sm:grid-cols-4 sm:divide-x">
             <Figure value={thisWeek.length} caption="This week" sub={next ? `Next ${formatDay(next.current_deadline)}` : 'All clear'} />
             <Figure value={inProgress.length} caption="In progress" sub={`${new Set(inProgress.map((a) => a.course_id)).size} courses`} />
-            <Figure value={completed.length} caption="Completed" sub={`of ${assignments.length}`} />
-            <Figure value={overdue.length} caption="Overdue" sub={overdue[0] ? overdue[0].title.split(':')[0] : 'None'} tone="alert" />
+            <Figure value={handedIn.length} caption="Submitted" sub={`of ${assignments.length} · ${graded.length} graded`} />
+            <Figure value={overdue.length} caption="Missing" sub={overdue[0] ? overdue[0].title.split(':')[0] : 'None'} tone="alert" />
           </div>
         </div>
         <div className="border-t border-slate-100 bg-gradient-to-b from-slate-50/40 to-transparent px-7 pb-4 pt-5">
@@ -196,7 +207,7 @@ function StudentDashboard() {
               Full calendar <ArrowRight size={14} />
             </Link>
           </div>
-          <DeadlineRibbon assignments={assignments} changed={changed} progress={progress} />
+          <DeadlineRibbon assignments={assignments} changed={changed} work={work} />
         </div>
       </Card>
 
@@ -207,18 +218,18 @@ function StudentDashboard() {
             <Segmented
               value={tab}
               onChange={setTab}
-              options={[{ value: 'all', label: 'All open' }, { value: 'week', label: 'This week' }, { value: 'overdue', label: 'Overdue' }]}
+              options={[{ value: 'all', label: 'All open' }, { value: 'week', label: 'This week' }, { value: 'overdue', label: 'Missing' }]}
             />
           </div>
           <AssignmentTable
             rows={tab === 'all' && !query ? rows.slice(0, 6) : rows}
-            progress={progress}
+            work={work}
             changed={changed}
             role="student"
-            empty={query ? 'No assignments match your search.' : 'Nothing here. Enjoy the quiet.'}
-            onStatus={async (a, s) => {
+            empty={query ? 'No assignments match your search.' : 'Nothing left to hand in. Enjoy the quiet.'}
+            onStart={async (a) => {
               if (!profile) return
-              await saveProgress(profile.id, a.id, s)
+              await setStarted(profile.id, a.id, true)
               await reload()
             }}
           />
@@ -262,10 +273,12 @@ function StudentDashboard() {
   )
 }
 
-function CourseProgress({ courses, delay }: { courses: { id: string; name: string; total: number; done: number }[]; delay: number }) {
+interface CourseSummary { id: string; name: string; total: number; done: number; average: number | null }
+
+function CourseProgress({ courses, delay }: { courses: CourseSummary[]; delay: number }) {
   return (
     <Card className="rise" style={{ ['--i' as string]: delay }}>
-      <SectionTitle aside={<span className="text-xs text-slate-500">Completed</span>}>Your courses</SectionTitle>
+      <SectionTitle aside={<span className="text-xs text-slate-500">Submitted</span>}>Your courses</SectionTitle>
       {courses.length === 0 ? (
         <p className="text-sm text-slate-500">Enroll in a course to see it here.</p>
       ) : (
@@ -285,13 +298,14 @@ function CourseProgress({ courses, delay }: { courses: { id: string; name: strin
                   aria-valuenow={c.done}
                   aria-valuemin={0}
                   aria-valuemax={c.total}
-                  aria-label={`${c.name}: ${c.done} of ${c.total} completed`}
+                  aria-label={`${c.name}: ${c.done} of ${c.total} submitted`}
                 >
                   <div
                     className="h-full origin-left rounded-full"
                     style={{ transform: `scaleX(${pct / 100})`, background: courseTheme(c.id).dot, transition: 'transform 1s var(--ease-out-soft)' }}
                   />
                 </div>
+                {c.average !== null && <div className="mt-1 font-mono text-[11px] text-slate-500">Average grade {c.average}%</div>}
               </li>
             )
           })}
@@ -323,7 +337,7 @@ interface RecentChange {
 
 function InstructorDashboard() {
   const { profile } = useAuth()
-  const { assignments, changed, loading, error } = useAssignments('instructor')
+  const { assignments, classWork, changed, loading, error } = useAssignments('instructor')
   const [courses, setCourses] = useState<Course[]>([])
   const [enrolled, setEnrolled] = useState<Record<string, number>>({})
   const [recent, setRecent] = useState<RecentChange[]>([])
@@ -351,6 +365,8 @@ function InstructorDashboard() {
   const thisWeek = upcoming.filter((a) => daysFromToday(a.current_deadline) <= 7)
   const rows = upcoming.filter((a) => `${a.title} ${a.courses?.name}`.toLowerCase().includes(query.toLowerCase())).slice(0, 6)
   const studentsTotal = Object.values(enrolled).reduce((x, y) => x + y, 0)
+  const toGrade = Object.values(classWork).reduce((n, w) => n + w.toGrade, 0)
+  const submittedTotal = Object.values(classWork).reduce((n, w) => n + w.submitted, 0)
   const next = upcoming[0]
 
   const summary = [
@@ -376,8 +392,8 @@ function InstructorDashboard() {
           </div>
           <div className="grid grid-cols-2 gap-y-4 divide-slate-200 sm:grid-cols-4 sm:divide-x">
             <Figure value={courses.length} caption="Courses" sub={`${studentsTotal} enrollments`} />
-            <Figure value={assignments.length} caption="Published" sub={`${upcoming.length} still open`} />
             <Figure value={thisWeek.length} caption="This week" sub={next ? `Next ${formatDay(next.current_deadline)}` : 'All clear'} />
+            <Figure value={toGrade} caption="To grade" sub={`${submittedTotal} submissions`} />
             <Figure value={Object.keys(changed).length} caption="Moved" sub="deadlines changed" />
           </div>
         </div>
@@ -395,7 +411,7 @@ function InstructorDashboard() {
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <Card className="rise !p-0 self-start" style={{ ['--i' as string]: 2 }}>
           <div className="px-6 pb-4 pt-5"><h2 className="text-lg font-semibold">Coming up</h2></div>
-          <AssignmentTable rows={rows} progress={{}} changed={changed} role="instructor" empty="No upcoming deadlines." />
+          <AssignmentTable rows={rows} classWork={classWork} changed={changed} role="instructor" empty="No upcoming deadlines." />
           <div className="border-t border-slate-100 px-6 py-3.5">
             <Link to="/assignments" className="inline-flex items-center gap-1 text-sm font-semibold text-indigo-700 hover:text-indigo-800">
               All assignments <ArrowRight size={14} />
